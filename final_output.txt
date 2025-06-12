@@ -1,0 +1,13 @@
+INFO 2025-06-11 05:44:20,287 firebase_service 1708 10348 Firebase Admin SDK initialized successfully
+VALIDATION FINALE DU SYSTEME DE NOTIFICATIONS
+============================================================
+1. Messaging tasks import: SUCCESS
+2. Matching tasks import: SUCCESS
+3. Firebase messaging: SUCCESS
+4. Celery integration: SUCCESS
+5. User model validation: SUCCESS
+6. Celery task decorators: SUCCESS
+============================================================
+RESULTS: 6/6 tests passed
+STATUS: ALL TESTS PASSED - System ready!
+The HIVMeet notification system is fully functional.

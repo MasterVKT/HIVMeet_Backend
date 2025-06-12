@@ -1,0 +1,1309 @@
+Document de Spécification de l'Interface Frontend-Backend - HIVMeet
+1. Introduction
+1.1. Objectif de ce Document
+Ce document a pour but de définir de manière exhaustive et précise l'ensemble des points d'interaction entre l'application frontend (développée avec Flutter ) et l'application backend (développée avec Django, utilisant Firebase pour certains services ) pour HIVMeet. Il vise à permettre un développement parallèle et indépendant des deux composants tout en assurant leur compatibilité et leur intégration harmonieuse finale. Les équipes frontend et backend devront impérativement se référer à ce document pour toute implémentation relative à la communication inter-composants.
+1.2. Vue d'Ensemble de l'Application
+HIVMeet est une application de rencontre mobile conçue spécifiquement pour les personnes vivant avec le VIH/SIDA. Elle a pour objectif de fournir un espace sécurisé, confidentiel et accueillant pour permettre à ses utilisateurs de nouer des relations. L'application comprendra des fonctionnalités d'inscription, de création de profil, de découverte d'autres utilisateurs, de matching, de messagerie, et de partage de ressources informatives. Une attention particulière est portée à la sécurité et à la confidentialité des données des utilisateurs, notamment les informations médicales.
+1.3. Technologies
+•	Frontend : Flutter (dernière version stable) 
+•	Backend : Django REST Framework (Python). Bien que les documents initiaux mentionnent Node.js/Express pour certaines spécifications fonctionnelles backend et Firebase Cloud Functions pour l'architecture technique backend, la demande principale stipule un backend Django. Ce document se concentrera sur les API REST fournies par un backend Django, en tenant compte des fonctionnalités décrites. Firebase sera utilisé pour l'authentification (Firebase Authentication), le stockage de fichiers (Firebase Storage), et potentiellement les notifications (Firebase Cloud Messaging).
+•	Base de Données Principale (Backend) : PostgreSQL (comme suggéré dans les spécifications fonctionnelles backend ), bien que Firebase Firestore soit aussi mentionné dans l'architecture technique. Pour la clarté des API, nous nous baserons sur un modèle relationnel typique de Django.
+•	Base de Données (Frontend Cache) : Hive pour le cache de données, Secure Storage pour les données sensibles.
+2. Principes Généraux de Communication
+2.1. Protocole de Communication
+Toutes les communications entre le frontend et le backend s'effectueront via des API RESTful utilisant le protocole HTTPS pour garantir la sécurité des échanges.
+2.2. Format des Données
+Le format de données standard pour toutes les requêtes et réponses API sera JSON (JavaScript Object Notation). L'en-tête Content-Type devra être application/json pour les requêtes envoyant des données JSON.
+2.3. URL de Base des API
+Toutes les URL d'API seront préfixées par une URL de base qui dépendra de l'environnement (développement, recette, production). Par exemple :
+•	Développement : http://localhost:8000/api/v1/ ou https://dev.hivmeet.api/api/v1/
+•	Production : https://hivmeet.api/api/v1/
+Pour la suite de ce document, les chemins d'API seront donnés relativement à cette URL de base (par exemple, /auth/register).
+2.4. Authentification
+L'authentification sera gérée via des Tokens Web JSON (JWT).
+1.	Lors de la connexion ou de l'inscription réussie, le backend fournira un access_token (durée de vie courte, ex: 15 minutes ) et un refresh_token (durée de vie plus longue, ex: 7 jours ).
+2.	Le frontend devra stocker ces tokens de manière sécurisée (Secure Storage ).
+3.	Pour chaque requête nécessitant une authentification, le frontend devra inclure l'access_token dans l'en-tête Authorization avec le préfixe Bearer. 
+4.	Authorization: Bearer <access_token>
+5.	Si l'access_token est expiré (réponse 401 Unauthorized), le frontend devra utiliser le refresh_token pour obtenir un nouveau couple access_token/refresh_token via un endpoint dédié (voir section 3.5).
+6.	Firebase Authentication sera utilisé pour la gestion sous-jacente des utilisateurs et la génération initiale des tokens.
+2.5. Gestion des Erreurs
+Le backend utilisera les codes de statut HTTP standards pour indiquer le résultat des requêtes. Les réponses d'erreur (codes 4xx et 5xx) contiendront un corps JSON structuré pour fournir des détails :
+JSON
+{
+  "error_code": "UNIQUE_ERROR_IDENTIFIER", // Optionnel, pour erreurs spécifiques
+  "message": "Description lisible de l'erreur.",
+  "details": { // Optionnel, pour erreurs de validation par exemple
+    "field_name": ["Message d'erreur pour ce champ."]
+  }
+}
+Exemples de codes de statut courants :
+•	200 OK : Succès de la requête.
+•	201 Created : Ressource créée avec succès.
+•	204 No Content : Succès de la requête sans contenu à retourner (ex: suppression).
+•	400 Bad Request : La requête est malformée ou contient des données invalides (ex: erreurs de validation).
+•	401 Unauthorized : Authentification requise ou token invalide/expiré.
+•	403 Forbidden : Authentification réussie mais l'utilisateur n'a pas les droits nécessaires pour accéder à la ressource.
+•	404 Not Found : La ressource demandée n'existe pas.
+•	409 Conflict : Conflit, par exemple, une ressource que l'on essaie de créer existe déjà (email déjà utilisé ).
+•	429 Too Many Requests : Limite de requêtes atteinte.
+•	500 Internal Server Error : Erreur interne du serveur.
+2.6. Versionnement de l'API
+L'API sera versionnée via l'URL (ex: /api/v1/). Cela permettra d'introduire des modifications majeures sans impacter les versions existantes du frontend.
+2.7. Pagination
+Pour les endpoints retournant des listes de ressources (ex: profils, messages), la pagination sera utilisée.
+•	Le frontend pourra spécifier les paramètres page (numéro de la page, défaut 1) et page_size (nombre d'éléments par page, défaut 20 ) dans les requêtes GET.
+•	La réponse contiendra les données paginées ainsi que des méta-informations : 
+JSON
+{
+  "count": 120, // Nombre total d'éléments
+  "next": "https://hivmeet.api/api/v1/resource/?page=2&page_size=20", // URL de la page suivante, null si dernière page
+  "previous": null, // URL de la page précédente, null si première page
+  "results": [
+    // ... liste des éléments de la page courante ...
+  ]
+}
+2.8. Conventions de Nommage
+•	Champs JSON : snake_case (ex: display_name, birth_date).
+•	Chemins d'URL : kebab-case pour les ressources, identifiants en tant que paramètres de chemin (ex: /user-profiles/{user_id}/).
+3. Endpoints d'Authentification
+3.1. Inscription Utilisateur
+•	Endpoint : POST /auth/register 
+•	Description : Crée un nouveau compte utilisateur.
+•	Authentification Requise : Non
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "email": "string", // Obligatoire, format email valide [cite: 320, 364]
+  "password": "string", // Obligatoire, min 8 caractères, 1 majuscule, 1 minuscule, 1 chiffre, 1 spécial [cite: 364]
+  "birth_date": "YYYY-MM-DD", // Obligatoire, l'utilisateur doit avoir 18+ ans [cite: 320]
+  "display_name": "string", // Obligatoire, 3-30 caractères [cite: 325]
+  "phone_number": "string" // Optionnel, format international E.164 [cite: 320]
+}
+•	Réponse de Succès (201 Created) : 
+JSON
+{
+  "user_id": "string", // UUID de l'utilisateur créé
+  "email": "string",
+  "display_name": "string",
+  "message": "Inscription réussie. Veuillez vérifier votre email."
+}
+Le backend enverra un email de vérification à l'adresse fournie.
+•	Réponses d'Erreur : 
+o	400 Bad Request : Données invalides (avec détails des erreurs par champ).
+o	409 Conflict : L'email existe déjà.
+3.2. Vérification d'Email
+•	Endpoint : GET /auth/verify-email/{verification_token} 
+•	Description : Vérifie l'email de l'utilisateur en utilisant le token envoyé lors de l'inscription.
+•	Authentification Requise : Non
+•	Paramètres d'URL : 
+o	verification_token: string (token unique envoyé à l'email)
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "message": "Email vérifié avec succès. Vous pouvez maintenant vous connecter."
+}
+Le frontend devrait rediriger vers l'écran de connexion ou directement vers la création de profil si c'est le flux post-inscription.
+•	Réponses d'Erreur : 
+o	400 Bad Request : Token invalide ou expiré.
+o	404 Not Found : Token non trouvé.
+3.3. Connexion Utilisateur
+•	Endpoint : POST /auth/login 
+•	Description : Authentifie un utilisateur et retourne les tokens JWT.
+•	Authentification Requise : Non
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "email": "string", // Obligatoire [cite: 322]
+  "password": "string", // Obligatoire [cite: 322]
+  "remember_me": "boolean" // Optionnel, pour étendre la durée de vie du refresh_token [cite: 322]
+}
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "access_token": "string", // JWT Access Token [cite: 30]
+  "refresh_token": "string", // JWT Refresh Token [cite: 30]
+  "user": {
+    "user_id": "string",
+    "email": "string",
+    "display_name": "string",
+    "is_verified": "boolean", // Statut de vérification du compte (identité/médical) [cite: 395]
+    "is_premium": "boolean", // Statut de l'abonnement premium [cite: 395]
+    "profile_complete": "boolean" // Indicateur si le profil de base est complété
+  }
+}
+•	Réponses d'Erreur : 
+o	401 Unauthorized : Identifiants incorrects ou compte non actif.
+o	403 Forbidden : Compte non vérifié par email.
+3.4. Demande de Réinitialisation de Mot de Passe
+•	Endpoint : POST /auth/forgot-password 
+•	Description : Initie le processus de réinitialisation de mot de passe en envoyant un lien à l'email de l'utilisateur.
+•	Authentification Requise : Non
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "email": "string" // Obligatoire [cite: 323]
+}
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "message": "Si un compte avec cet email existe, un lien de réinitialisation a été envoyé."
+}
+(Message générique pour ne pas révéler l'existence ou non d'un email)
+•	Réponses d'Erreur : 
+o	400 Bad Request : Format d'email invalide.
+3.5. Réinitialisation de Mot de Passe
+•	Endpoint : POST /auth/reset-password 
+•	Description : Définit un nouveau mot de passe en utilisant le token de réinitialisation.
+•	Authentification Requise : Non
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "token": "string", // Obligatoire, token reçu par email [cite: 324]
+  "new_password": "string" // Obligatoire, nouveau mot de passe respectant les critères de force [cite: 324]
+}
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "message": "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter."
+}
+•	Réponses d'Erreur : 
+o	400 Bad Request : Token invalide/expiré ou mot de passe faible.
+3.6. Rafraîchissement du Token d'Accès
+•	Endpoint : POST /auth/refresh-token
+•	Description : Obtient un nouveau access_token en utilisant un refresh_token valide.
+•	Authentification Requise : Non (mais le refresh_token est une forme d'authentification)
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "refresh_token": "string" // Obligatoire
+}
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "access_token": "string", // Nouveau JWT Access Token
+  "refresh_token": "string" // Optionnellement, un nouveau refresh_token peut être retourné pour la rotation
+}
+•	Réponses d'Erreur : 
+o	401 Unauthorized : refresh_token invalide, expiré ou révoqué.
+3.7. Déconnexion
+•	Endpoint : POST /auth/logout
+•	Description : Invalide le refresh_token de l'utilisateur (si le backend maintient une liste de tokens actifs/révoqués). Le frontend doit supprimer localement les tokens.
+•	Authentification Requise : Oui (via access_token)
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "refresh_token": "string" // Obligatoire, pour que le backend puisse le mettre sur liste noire
+}
+•	Réponse de Succès (204 No Content)
+•	Réponses d'Erreur : 
+o	401 Unauthorized : Token d'accès invalide.
+4. Endpoints de Gestion des Profils Utilisateurs
+4.1. Créer/Mettre à Jour le Profil Utilisateur
+•	Endpoint : 
+o	POST /user-profiles/me (pour la création initiale du profil de l'utilisateur connecté)
+o	PUT /user-profiles/me (pour la mise à jour complète du profil de l'utilisateur connecté)
+o	PATCH /user-profiles/me (pour la mise à jour partielle du profil de l'utilisateur connecté)
+•	Description : Crée ou met à jour les informations du profil de l'utilisateur authentifié. Le POST est typiquement pour la première création après l'inscription, PUT pour un remplacement complet, PATCH pour des modifications partielles. Les spécifications fonctionnelles backend suggèrent POST /api/users/profile et PUT /api/users/profile.
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) pour POST / PUT : 
+JSON
+{
+  "display_name": "string", // Optionnel pour PUT/PATCH, 3-30 caractères [cite: 325]
+  "bio": "string", // Optionnel, max 500 caractères [cite: 325]
+  "birth_date": "YYYY-MM-DD", // Optionnel (généralement non modifiable après inscription ou via un autre processus)
+  "location": { // Obligatoire pour POST, optionnel pour PUT/PATCH [cite: 325]
+    "city": "string",
+    "country": "string",
+    "latitude": "float", // Coordonnées géographiques
+    "longitude": "float"
+  },
+  "hide_exact_location": "boolean", // Optionnel, défaut false [cite: 325]
+  "interests": ["string", "string", "string"], // Optionnel, tableau de strings, max 3 intérêts [cite: 325, 402]
+  "relationship_types_sought": ["string"], // Optionnel, ex: ["friendship", "long_term"] (liste d'enums) [cite: 402]
+  "search_preferences": { // Obligatoire pour POST, optionnel pour PUT/PATCH
+    "age_min": "integer", // 18-99 [cite: 325]
+    "age_max": "integer", // 18-99, doit être >= age_min [cite: 325]
+    "distance_max_km": "integer", // 5-100 km [cite: 325]
+    "genders_sought": ["string"] // ex: ["male", "female", "non_binary"] (liste d'enums) [cite: 325]
+  },
+  "visibility_settings": { // Optionnel
+      "show_online_status": "boolean", // Défaut true
+      "allow_profile_in_discovery": "boolean" // Défaut true
+  }
+}
+•	Réponse de Succès (201 Created pour POST, 200 OK pour PUT/PATCH) : 
+JSON
+// Le profil complet de l'utilisateur mis à jour
+// (similaire à la réponse de GET /user-profiles/me)
+{
+  "user_id": "string",
+  "email": "string", // De la ressource User
+  "display_name": "string",
+  "bio": "string",
+  "birth_date": "YYYY-MM-DD",
+  "age": "integer", // Calculé par le backend [cite: 402]
+  "location": {
+    "city": "string",
+    "country": "string",
+    "latitude": "float",
+    "longitude": "float"
+  },
+  "hide_exact_location": "boolean",
+  "photos": [ // Voir section photos
+    { "photo_id": "string", "url": "string", "is_main": "boolean" }
+  ],
+  "interests": ["string"],
+  "relationship_types_sought": ["string"],
+  "search_preferences": {
+    "age_min": "integer",
+    "age_max": "integer",
+    "distance_max_km": "integer",
+    "genders_sought": ["string"]
+  },
+  "is_verified": "boolean", // Statut de vérification global [cite: 395]
+  "is_premium": "boolean", [cite: 395]
+  "premium_until": "YYYY-MM-DDTHH:mm:ssZ", // Null si non premium [cite: 395]
+  "last_active": "YYYY-MM-DDTHH:mm:ssZ", [cite: 395]
+  "created_at": "YYYY-MM-DDTHH:mm:ssZ",
+  "updated_at": "YYYY-MM-DDTHH:mm:ssZ",
+  "visibility_settings": {
+      "show_online_status": "boolean",
+      "allow_profile_in_discovery": "boolean"
+  }
+}
+•	Réponses d'Erreur : 400 Bad Request, 401 Unauthorized.
+4.2. Obtenir le Profil de l'Utilisateur Connecté
+•	Endpoint : GET /user-profiles/me
+•	Description : Récupère les informations complètes du profil de l'utilisateur authentifié.
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) : Structure identique à la réponse de succès de POST/PUT /user-profiles/me.
+4.3. Obtenir le Profil d'un Autre Utilisateur
+•	Endpoint : GET /user-profiles/{user_id}
+•	Description : Récupère les informations publiques du profil d'un autre utilisateur.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : 
+o	user_id: string (ID de l'utilisateur cible)
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "user_id": "string",
+  "display_name": "string",
+  "bio": "string", // Peut être limité ou masqué selon les préférences de confidentialité
+  "age": "integer",
+  "city": "string", // Ou seulement pays si 'hide_exact_location' est true
+  "country": "string",
+  "photos": [
+    { "photo_id": "string", "url": "string", "is_main": "boolean" }
+    // N'inclut pas les photos privées
+  ],
+  "interests": ["string"],
+  "relationship_types_sought": ["string"],
+  "is_verified": "boolean",
+  "is_premium_badge": "boolean", // Juste un indicateur si l'utilisateur est premium, pas de détails
+  "last_active_display": "string", // ex: "En ligne", "Actif récemment", "Actif aujourd'hui"
+  "distance_from_me_km": "integer" // Calculé si applicable
+}
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden (si le profil est privé ou bloqué), 404 Not Found.
+4.4. Gestion des Photos de Profil
+4.4.1. Téléverser une Photo de Profil
+•	Endpoint : POST /user-profiles/me/photos 
+•	Description : Téléverse une nouvelle photo pour le profil de l'utilisateur. Le backend gère le redimensionnement, l'optimisation et le stockage (Firebase Storage).
+•	Authentification Requise : Oui
+•	Corps de la Requête (multipart/form-data) : 
+o	file: Fichier image (JPG, PNG, max 5MB )
+o	is_main: boolean (Optionnel, pour définir comme photo principale)
+o	caption: string (Optionnel)
+•	Réponse de Succès (201 Created) : 
+JSON
+{
+  "photo_id": "string", // ID unique de la photo
+  "url": "string", // URL publique de la photo téléversée (peut être une URL signée Firebase Storage)
+  "is_main": "boolean",
+  "caption": "string",
+  "uploaded_at": "YYYY-MM-DDTHH:mm:ssZ"
+}
+•	Réponses d'Erreur : 400 Bad Request (fichier invalide, taille dépassée, limite de photos atteinte), 401 Unauthorized.
+4.4.2. Lister les Photos de Profil
+•	Endpoint : GET /user-profiles/me/photos
+•	Description : Récupère la liste des photos de profil de l'utilisateur.
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "photos": [
+    {
+      "photo_id": "string",
+      "url": "string",
+      "is_main": "boolean",
+      "caption": "string",
+      "uploaded_at": "YYYY-MM-DDTHH:mm:ssZ"
+    }
+    // ... autres photos
+  ]
+}
+4.4.3. Définir une Photo Principale
+•	Endpoint : PUT /user-profiles/me/photos/{photo_id}/set-main (Alternative : PUT /api/users/photos/:id pour les métadonnées )
+•	Description : Définit une photo existante comme photo principale.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : 
+o	photo_id: string
+•	Réponse de Succès (200 OK) : Le profil mis à jour (ou juste les photos).
+4.4.4. Supprimer une Photo de Profil
+•	Endpoint : DELETE /user-profiles/me/photos/{photo_id} (Similaire à DELETE /api/users/photos/:id )
+•	Description : Supprime une photo de profil. Vérification qu'au moins une photo reste si la photo supprimée est la principale.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : 
+o	photo_id: string
+•	Réponse de Succès (204 No Content)
+•	Réponses d'Erreur : 400 Bad Request (ex: impossible de supprimer la seule photo), 401 Unauthorized, 404 Not Found.
+4.5. Vérification de Compte (Identité et Statut Médical)
+Le processus est multi-étapes.
+4.5.1. Demander la Vérification / Obtenir le Statut de Vérification
+•	Endpoint : GET /user-profiles/me/verification
+•	Description : Récupère le statut actuel de la vérification du compte.
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "user_id": "string",
+  "verification_status": "string", // Enum: "not_started", "pending_id", "pending_medical", "pending_selfie", "pending_review", "verified", "rejected", "expired" [cite: 395, 418]
+  "rejection_reason": "string", // Null si non applicable [cite: 418]
+  "expires_at": "YYYY-MM-DDTHH:mm:ssZ", // Null si non vérifié ou non applicable [cite: 418]
+  "submitted_at": "YYYY-MM-DDTHH:mm:ssZ", // [cite: 418]
+  "reviewed_at": "YYYY-MM-DDTHH:mm:ssZ", // [cite: 418]
+  "required_documents": [ // Peut être dynamique basé sur le statut
+    {"type": "identity_document", "status": "pending/uploaded/approved/rejected"},
+    {"type": "medical_document", "status": "pending/uploaded/approved/rejected"},
+    {"type": "selfie_with_code", "status": "pending/uploaded/approved/rejected"}
+  ],
+  "verification_selfie_code": "string" // Code à afficher pour le selfie, si à cette étape [cite: 327]
+}
+4.5.2. Générer une URL de Téléversement Sécurisée pour Document
+•	Endpoint : POST /user-profiles/me/verification/generate-upload-url
+•	Description : Le frontend demande une URL pré-signée pour téléverser un document directement vers Firebase Storage afin de ne pas transiter de gros fichiers par le backend Django.
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "document_type": "string", // Enum: "identity_document", "medical_document", "selfie_with_code"
+  "file_type": "string", // Mime type, ex: "image/jpeg", "application/pdf"
+  "file_size": "integer" // En bytes
+}
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "upload_url": "string", // URL pré-signée pour Firebase Storage (PUT request)
+  "file_path_on_storage": "string" // Chemin où le fichier sera stocké, à renvoyer au backend après upload
+}
+Le frontend utilisera cette upload_url pour envoyer le fichier directement à Firebase Storage.
+•	Réponses d'Erreur : 400 Bad Request.
+4.5.3. Soumettre les Références des Documents Téléversés pour Vérification
+•	Endpoint : POST /user-profiles/me/verification/submit-documents (Correspond à POST /api/users/verification/upload et POST /api/users/verification/selfie )
+•	Description : Après avoir téléversé les documents vers Firebase Storage, le frontend notifie le backend avec les chemins des fichiers.
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "documents": [
+    {
+      "document_type": "string", // "identity_document", "medical_document", "selfie_with_code"
+      "file_path_on_storage": "string" // Chemin retourné par generate-upload-url
+    }
+    // Inclure tous les documents soumis/mis à jour dans cette étape
+  ],
+  "selfie_code_used": "string" // Si document_type est selfie_with_code
+}
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "verification_status": "pending_review", // Ou un autre statut pertinent
+  "message": "Documents soumis pour vérification."
+}
+•	Réponses d'Erreur : 400 Bad Request.
+5. Endpoints de Découverte et Matching
+5.1. Obtenir les Profils Recommandés
+•	Endpoint : GET /discovery/profiles 
+•	Description : Récupère une liste de profils utilisateurs suggérés pour l'utilisateur connecté, basée sur ses préférences et l'algorithme de matching.
+•	Authentification Requise : Oui
+•	Paramètres de Requête (Query Parameters) : 
+o	page: integer (optionnel, pour la pagination)
+o	page_size: integer (optionnel, pour la pagination)
+o	filter_verified_only: boolean (optionnel )
+o	filter_relationship_type: string (optionnel )
+o	filter_min_age: integer (optionnel )
+o	filter_max_age: integer (optionnel )
+o	filter_max_distance: integer (optionnel )
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "count": "integer",
+  "next": "string_or_null",
+  "previous": "string_or_null",
+  "results": [
+    // Structure similaire à GET /user-profiles/{user_id}
+    {
+      "user_id": "string",
+      "display_name": "string",
+      "age": "integer",
+      "city": "string",
+      "main_photo_url": "string",
+      "is_verified": "boolean"
+      // ... autres champs publics pertinents pour la carte de découverte
+    }
+  ]
+}
+•	Réponses d'Erreur : 401 Unauthorized.
+5.2. "Liker" un Profil
+•	Endpoint : POST /discovery/interactions/like (Basé sur POST /api/discover/like )
+•	Description : L'utilisateur connecté "like" un autre profil.
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "target_user_id": "string" // ID de l'utilisateur liké [cite: 331]
+}
+•	Réponse de Succès : 
+o	201 Created (Like enregistré, pas de match immédiat) : 
+JSON
+{ "status": "liked" }
+o	200 OK (Like enregistré, ET C'EST UN MATCH !) : 
+JSON
+{
+  "status": "matched",
+  "match_id": "string", // ID du nouveau match créé
+  "matched_user_info": { // Infos sur l'utilisateur avec qui on a matché
+    "user_id": "string",
+    "display_name": "string",
+    "main_photo_url": "string"
+  }
+}
+•	Réponses d'Erreur : 401 Unauthorized, 404 Not Found (target_user_id inexistant), 429 Too Many Requests (limite de likes atteinte pour les non-premium ).
+5.3. "Disliker" un Profil
+•	Endpoint : POST /discovery/interactions/dislike (Basé sur POST /api/discover/dislike )
+•	Description : L'utilisateur connecté "dislike" (ou passe) un autre profil.
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "target_user_id": "string" // ID de l'utilisateur disliké [cite: 331]
+}
+•	Réponse de Succès (201 Created) : 
+JSON
+{ "status": "disliked" }
+•	Réponses d'Erreur : 401 Unauthorized, 404 Not Found.
+5.4. "Super Liker" un Profil (Fonctionnalité Premium)
+•	Endpoint : POST /discovery/interactions/superlike 
+•	Description : L'utilisateur connecté "super like" un autre profil.
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "target_user_id": "string" [cite: 333]
+}
+•	Réponse de Succès (similaire à Like, mais avec un indicateur "superliked") : 
+o	201 Created (Superlike enregistré, pas de match immédiat) : 
+JSON
+{ "status": "superliked" }
+o	200 OK (Superlike enregistré, ET C'EST UN MATCH !) : 
+JSON
+{
+  "status": "matched_with_superlike",
+  "match_id": "string",
+  "matched_user_info": { /* ... */ }
+}
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden (non-premium ou limite de superlikes atteinte ), 404 Not Found, 429 Too Many Requests.
+5.5. Obtenir la Liste des Matches
+•	Endpoint : GET /matches 
+•	Description : Récupère la liste des utilisateurs avec qui l'utilisateur connecté a matché.
+•	Authentification Requise : Oui
+•	Paramètres de Requête : 
+o	page, page_size
+o	status: string (optionnel, ex: "active", "pending" - pour les likes non réciproques si inclus ici )
+o	sort: string (optionnel, ex: "recent_activity", "match_date" )
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "count": "integer",
+  "next": "string_or_null",
+  "previous": "string_or_null",
+  "results": [
+    {
+      "match_id": "string",
+      "matched_user": {
+        "user_id": "string",
+        "display_name": "string",
+        "age": "integer",
+        "main_photo_url": "string",
+        "is_verified": "boolean",
+        "last_active_display": "string"
+      },
+      "created_at": "YYYY-MM-DDTHH:mm:ssZ", // Date du match
+      "last_message_preview": "string_or_null", // Extrait du dernier message [cite: 407]
+      "last_message_at": "YYYY-MM-DDTHH:mm:ssZ_or_null", // [cite: 407]
+      "unread_message_count": "integer" // Nombre de messages non lus de cet utilisateur dans ce match [cite: 407]
+    }
+  ]
+}
+•	Réponses d'Erreur : 401 Unauthorized.
+5.6. Supprimer un Match (Unmatch)
+•	Endpoint : DELETE /matches/{match_id} 
+•	Description : Permet à un utilisateur de supprimer un match existant. La conversation associée sera également affectée.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : 
+o	match_id: string
+•	Réponse de Succès (204 No Content)
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden (pas partie du match), 404 Not Found.
+5.7. Obtenir la Liste des Utilisateurs qui ont "Liké" (Fonctionnalité Premium)
+•	Endpoint : GET /discovery/interactions/liked-me (Basé sur GET /api/discover/likes-received )
+•	Description : Récupère la liste des profils qui ont "liké" l'utilisateur connecté.
+•	Authentification Requise : Oui
+•	Paramètres de Requête : page, page_size
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "count": "integer",
+  "next": "string_or_null",
+  "previous": "string_or_null",
+  "results": [
+    {
+      "user_id": "string",
+      "display_name": "string",
+      "age": "integer",
+      "main_photo_url": "string",
+      "is_verified": "boolean",
+      "liked_at": "YYYY-MM-DDTHH:mm:ssZ"
+      // Le frontend peut flouter ces profils si l'utilisateur n'est pas premium [cite: 465]
+    }
+  ]
+}
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden (non-premium).
+5.8. Annuler le Dernier Swipe (Rewind - Fonctionnalité Premium)
+•	Endpoint : POST /discovery/interactions/rewind 
+•	Description : Annule la dernière action de swipe (like ou dislike).
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "status": "rewound",
+  "previous_profile": { /* Structure du profil précédent, si applicable */ }
+}
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden (non-premium ou limite de rewinds atteinte ), 400 Bad Request (pas d'action à annuler ou délai dépassé ).
+5.9. Activer un Boost de Profil (Fonctionnalité Premium)
+•	Endpoint : POST /discovery/boost/activate 
+•	Description : Active un boost de visibilité temporaire pour le profil de l'utilisateur.
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "status": "boost_activated",
+  "boost_ends_at": "YYYY-MM-DDTHH:mm:ssZ", // Heure de fin du boost (ex: 30 mins plus tard [cite: 334])
+  "boosts_remaining": "integer" // Si applicable
+}
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden (non-premium ou pas de boost disponible).
+6. Endpoints de Messagerie
+6.1. Obtenir la Liste des Conversations
+•	Endpoint : GET /conversations (Basé sur GET /api/messages/conversations )
+•	Description : Récupère la liste des conversations (matches avec qui des messages ont été échangés). Similaire à "Obtenir la Liste des Matches" mais peut être filtré différemment ou contenir plus de détails spécifiques à la messagerie.
+•	Authentification Requise : Oui
+•	Paramètres de Requête : 
+o	page, page_size
+o	status: string (optionnel, "active", "archived" )
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "count": "integer",
+  "next": "string_or_null",
+  "previous": "string_or_null",
+  "results": [
+    {
+      "conversation_id": "string", // Souvent identique au match_id
+      "other_user": { // Infos sur l'autre participant
+        "user_id": "string",
+        "display_name": "string",
+        "main_photo_url": "string",
+        "is_online": "boolean" // Si disponible
+      },
+      "last_message": {
+        "message_id": "string",
+        "content_preview": "string", // Tronqué
+        "sender_id": "string", // Pour savoir si c'est l'utilisateur connecté ou l'autre
+        "sent_at": "YYYY-MM-DDTHH:mm:ssZ",
+        "is_read_by_me": "boolean"
+      },
+      "unread_count_for_me": "integer",
+      "last_activity_at": "YYYY-MM-DDTHH:mm:ssZ"
+    }
+  ]
+}
+6.2. Obtenir les Messages d'une Conversation
+•	Endpoint : GET /conversations/{conversation_id}/messages (Basé sur GET /api/messages/conversations/:id )
+•	Description : Récupère les messages d'une conversation spécifique, paginés.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : 
+o	conversation_id: string
+•	Paramètres de Requête : 
+o	page, page_size (la pagination est souvent inversée : charger les messages plus anciens )
+o	before_message_id ou before_timestamp: pour charger les messages antérieurs au message/timestamp donné.
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "count": "integer", // Total des messages dans la conversation
+  "next": "string_or_null", // URL pour charger les messages plus anciens
+  "previous": "string_or_null", // URL pour charger les messages plus récents (moins courant pour le chat)
+  "results": [
+    {
+      "message_id": "string",
+      "conversation_id": "string",
+      "sender_id": "string", // Qui a envoyé
+      "content": "string", // Contenu texte du message [cite: 413]
+      "media_url": "string_or_null", // Pour les messages médias (premium) [cite: 413]
+      "media_type": "string_or_null", // "image", "video" (premium) [cite: 413]
+      "sent_at": "YYYY-MM-DDTHH:mm:ssZ", // [cite: 413]
+      "read_at_by_recipient": "YYYY-MM-DDTHH:mm:ssZ_or_null", // [cite: 413]
+      "is_sending": "boolean", // État côté client uniquement, non retourné par le backend
+      "error_sending": "boolean" // État côté client uniquement
+    }
+  ]
+}
+Le backend marquera automatiquement les messages récupérés comme "lus" par l'utilisateur connecté.
+6.3. Envoyer un Message
+•	Endpoint : POST /conversations/{conversation_id}/messages (Basé sur POST /api/messages/conversations/:id )
+•	Description : Envoie un message dans une conversation.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : 
+o	conversation_id: string
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "client_message_id": "string", // ID unique généré par le client pour la déduplication et le suivi
+  "content": "string", // Obligatoire si type="text", max 1000 caractères [cite: 335, 416]
+  "type": "string", // Enum: "text", "image", "video" (image/video pour premium) [cite: 335, 413]
+  "media_file_path_on_storage": "string_or_null" // Si type="image" ou "video", chemin du fichier sur Firebase Storage
+                                            // (obtenu après upload direct via URL pré-signée)
+}
+•	Réponse de Succès (201 Created) : 
+JSON
+// Le message créé, avec son ID serveur
+{
+  "message_id": "string", // ID généré par le serveur
+  "client_message_id": "string", // Celui envoyé par le client
+  "conversation_id": "string",
+  "sender_id": "string", // ID de l'utilisateur connecté
+  "content": "string",
+  "media_url": "string_or_null",
+  "media_type": "string_or_null",
+  "sent_at": "YYYY-MM-DDTHH:mm:ssZ",
+  "is_read_by_recipient": null // Initialement non lu par le destinataire
+}
+•	Réponses d'Erreur : 400 Bad Request (contenu invalide, limite de caractères, limite de messages stockés pour non-premium ), 401 Unauthorized, 403 Forbidden (pas partie de la conversation, ou tentative d'envoyer média sans premium), 404 Not Found (conversation inexistante).
+6.4. Marquer les Messages comme Lus
+•	Endpoint : PUT /conversations/{conversation_id}/messages/mark-as-read (Similaire à PUT /api/messages/:id/read qui semble être par message, mais marquer toute la conversation jusqu'à un certain point est plus commun)
+•	Description : Indique au backend que l'utilisateur a lu les messages d'une conversation jusqu'à un certain point (typiquement le dernier message reçu ou visible).
+•	Authentification Requise : Oui
+•	Paramètres d'URL : 
+o	conversation_id: string
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "last_read_message_id": "string" // Optionnel: ID du dernier message lu par l'utilisateur.
+                                 // Si absent, tous les messages de l'autre utilisateur sont marqués comme lus.
+}
+•	Réponse de Succès (204 No Content ou 200 OK avec le nombre de messages mis à jour)
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden, 404 Not Found.
+6.5. Supprimer un Message
+•	Endpoint : DELETE /conversations/{conversation_id}/messages/{message_id} (Similaire à DELETE /api/messages/:id )
+•	Description : Permet à un utilisateur de supprimer un message qu'il a envoyé ("supprimer pour moi" ou "supprimer pour tous" si permis dans un court délai). Les spécifications backend indiquent "suppression côté utilisateur uniquement".
+•	Authentification Requise : Oui
+•	Paramètres d'URL : 
+o	conversation_id: string
+o	message_id: string
+•	Corps de la Requête (Optionnel, pour "delete for everyone"): 
+JSON
+{
+    "scope": "sender_only" // ou "everyone"
+}
+•	Réponse de Succès (204 No Content)
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden (pas le propriétaire du message ou délai dépassé pour "supprimer pour tous"), 404 Not Found.
+7. Communication en Temps Réel (Notifications & Mises à Jour de Chat)
+7.1. Notifications Push via Firebase Cloud Messaging (FCM) 
+Le backend enverra des notifications push via FCM pour divers événements. Le frontend doit :
+1.	Demander la permission de recevoir des notifications.
+2.	Obtenir le token FCM de l'appareil.
+3.	Envoyer ce token au backend pour l'associer à l'utilisateur (voir section 11.1).
+4.	Gérer la réception des notifications en avant-plan et en arrière-plan.
+5.	Gérer la navigation lorsqu'une notification est ouverte.
+Types de Notifications (Payloads attendus par le frontend) :
+•	Nouveau Match : 
+JSON
+{
+  "notification_type": "NEW_MATCH",
+  "match_id": "string",
+  "matched_user_name": "string",
+  "matched_user_photo_url": "string_or_null",
+  "title": "C'est un Match !", // Localisé par le backend ou clé de localisation
+  "body": "Vous et {matched_user_name} vous êtes plu !" // Localisé
+}
+•	Nouveau Message : 
+JSON
+{
+  "notification_type": "NEW_MESSAGE",
+  "conversation_id": "string",
+  "sender_id": "string",
+  "sender_name": "string",
+  "message_preview": "string", // Extrait du message
+  "sender_photo_url": "string_or_null",
+  "title": "{sender_name}", // Localisé
+  "body": "{message_preview}" // Localisé
+}
+•	Like Reçu (Premium) : 
+JSON
+{
+  "notification_type": "PROFILE_LIKED",
+  "liker_user_name": "string",
+  "title": "Quelqu'un s'intéresse à vous !", // Localisé
+  "body": "{liker_user_name} a aimé votre profil." // Localisé
+}
+•	Statut de Vérification Mis à Jour : 
+JSON
+{
+  "notification_type": "VERIFICATION_UPDATE",
+  "verification_status": "verified | rejected",
+  "title": "Mise à jour de votre vérification", // Localisé
+  "body": "Votre statut de vérification est maintenant : {status_localisé}." // Localisé
+}
+•	Notifications Système/Promotionnelles : Structure à définir.
+7.2. Mises à Jour de Chat en Temps Réel
+Pour une expérience de chat fluide (indicateurs de frappe, statuts de lecture en temps réel), une solution comme WebSockets ou l'utilisation des listeners temps réel de Firestore est nécessaire.
+•	Si Firestore est utilisé directement par le frontend pour le chat (comme suggéré par l'architecture backend Firebase ), ce document d'API REST n'est pas concerné pour ces aspects. Le "Modèle de Données Backend - HIVMeet.pdf" décrit les collections Firestore matches et messages qui seraient écoutées.
+•	Si un service de WebSocket est fourni par le backend Django, ses spécifications seraient ajoutées ici (non détaillées dans les documents fournis pour Django).
+Événements Temps Réel attendus par le frontend (Exemples si via WebSockets) :
+•	typing_started: { "conversation_id": "string", "user_id": "string" }
+•	typing_stopped: { "conversation_id": "string", "user_id": "string" }
+•	message_read: { "conversation_id": "string", "message_id": "string", "reader_user_id": "string", "read_at": "timestamp" }
+•	new_message_received_in_conversation: Le message complet, similaire à la réponse de POST /conversations/{conversation_id}/messages.
+8. Appels Audio/Vidéo (Fonctionnalité Premium)
+Utilisation de WebRTC pour la communication P2P. Le backend Django servira de serveur de signalisation.
+8.1. Initier un Appel
+•	Endpoint : POST /calls/initiate 
+•	Description : Un utilisateur (appelant) initie un appel vers un autre utilisateur (appelé).
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "target_user_id": "string", // ID de l'utilisateur à appeler [cite: 338]
+  "call_type": "string", // Enum: "audio", "video" [cite: 338]
+  "offer_sdp": "string" // Session Description Protocol de l'appelant [cite: 338]
+}
+•	Réponse de Succès (201 Created) : 
+JSON
+{
+  "call_id": "string", // ID unique pour cet appel
+  "status": "ringing", // Ou "initiated"
+  "message": "Appel initié. En attente de la réponse de l'appelé."
+}
+Le backend notifiera l'appelé (via FCM et/ou WebSocket) de l'appel entrant.
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden (non-premium, limite d'appels, utilisateur cible non disponible/bloqué), 404 Not Found (target_user_id).
+8.2. Répondre à un Appel
+•	Endpoint : POST /calls/{call_id}/answer (Basé sur PUT /api/calls/:id/answer )
+•	Description : L'appelé accepte l'appel entrant.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : call_id: string
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "answer_sdp": "string" // SDP de l'appelé
+}
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "call_id": "string",
+  "status": "connected",
+  "message": "Appel connecté."
+}
+Le backend transmettra la réponse SDP à l'appelant via le canal de signalisation.
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden, 404 Not Found (appel inexistant ou expiré).
+8.3. Refuser/Terminer un Appel
+•	Endpoint : POST /calls/{call_id}/terminate (Basé sur PUT /api/calls/:id/end )
+•	Description : L'appelant ou l'appelé termine l'appel. Ou l'appelé refuse un appel entrant.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : call_id: string
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "reason": "string" // Enum: "declined", "ended_by_caller", "ended_by_callee", "no_answer", "connection_failed", "duration_limit_reached"
+}
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "call_id": "string",
+  "status": "terminated",
+  "duration_seconds": "integer", // Si l'appel a été connecté
+  "message": "Appel terminé."
+}
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden, 404 Not Found.
+8.4. Échange de Candidats ICE (Signalisation)
+•	Endpoint : POST /calls/{call_id}/ice-candidate 
+•	Description : Les clients envoient leurs candidats ICE au serveur de signalisation, qui les relaie à l'autre pair.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : call_id: string
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "candidate": { /* Objet candidat ICE WebRTC */ }
+}
+•	Réponse de Succès (204 No Content) Le backend transmettra le candidat ICE à l'autre participant via le canal de signalisation.
+•	Réponses d'Erreur : 401 Unauthorized, 403 Forbidden, 404 Not Found.
+Note sur la signalisation : Les détails exacts de la signalisation (ex: utilisation de WebSockets pour relayer les offres, réponses, candidats ICE entre les pairs via le serveur Django) doivent être spécifiés. Les endpoints ci-dessus sont pour initier/gérer l'état de l'appel, mais la transmission en temps réel des messages de signalisation se fera probablement par un autre mécanisme.
+9. Endpoints de Contenu et Ressources
+9.1. Obtenir les Catégories de Ressources
+•	Endpoint : GET /content/resource-categories (Basé sur GET /api/resources/categories )
+•	Description : Récupère la liste des catégories de ressources (ex: Articles, Vidéos, Contacts utiles).
+•	Authentification Requise : Oui (pour potentiellement afficher des catégories premium)
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "categories": [
+    {
+      "category_id": "string",
+      "name": "string", // Nom localisé
+      "description": "string_or_null", // Description localisée
+      "icon_url": "string_or_null",
+      "resource_count": "integer",
+      "is_premium_only": "boolean"
+    }
+  ]
+}
+9.2. Obtenir les Ressources
+•	Endpoint : GET /content/resources (Basé sur GET /api/resources/articles )
+•	Description : Récupère une liste de ressources, avec filtres possibles.
+•	Authentification Requise : Oui
+•	Paramètres de Requête : 
+o	page, page_size
+o	category_id: string (optionnel )
+o	tags: string (optionnel, liste de tags séparés par des virgules, ex: "tag1,tag2" )
+o	search_query: string (optionnel, pour recherche texte )
+o	language: string (optionnel, code langue ex: "fr", "en", défaut la langue de l'utilisateur )
+o	type: string (optionnel, Enum: "article", "video", "link", "contact" )
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "count": "integer",
+  "next": "string_or_null",
+  "previous": "string_or_null",
+  "results": [
+    {
+      "resource_id": "string", [cite: 428]
+      "title": "string", // Localisé [cite: 428]
+      "type": "string", // "article", "video", "link", "contact" [cite: 428]
+      "category_name": "string", // Localisé
+      "tags": ["string"], // [cite: 428]
+      "thumbnail_url": "string_or_null", // [cite: 428]
+      "publication_date": "YYYY-MM-DD", // [cite: 428]
+      "is_premium": "boolean", // [cite: 428]
+      "is_verified_expert": "boolean", // Si validé par un expert [cite: 428]
+      "estimated_read_time_minutes": "integer_or_null" // Pour articles
+    }
+  ]
+}
+9.3. Obtenir le Détail d'une Ressource
+•	Endpoint : GET /content/resources/{resource_id} (Basé sur GET /api/resources/articles/:id )
+•	Description : Récupère le contenu complet d'une ressource.
+•	Authentification Requise : Oui
+•	Paramètres d'URL : resource_id: string
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "resource_id": "string",
+  "title": "string", // Localisé
+  "type": "string",
+  "category_name": "string", // Localisé
+  "tags": ["string"],
+  "main_image_url": "string_or_null",
+  "publication_date": "YYYY-MM-DD",
+  "last_updated_at": "YYYY-MM-DDTHH:mm:ssZ", // [cite: 428]
+  "author_name": "string_or_null", // [cite: 428]
+  "is_premium": "boolean",
+  "is_verified_expert": "boolean",
+  "language": "string", // [cite: 428]
+  "content": "string", // Contenu HTML pour articles, URL pour vidéos/liens, infos structurées pour contacts
+  "external_link": "string_or_null", // [cite: 428]
+  "view_count": "integer", // [cite: 428]
+  "is_favorite": "boolean", // Si l'utilisateur l'a mis en favori
+  "related_resources": [ // Optionnel, liste de ressources similaires (juste les IDs et titres)
+    { "resource_id": "string", "title": "string", "thumbnail_url": "string_or_null" }
+  ]
+}
+•	Réponses d'Erreur : 403 Forbidden (si ressource premium et utilisateur non-premium), 404 Not Found.
+9.4. Gérer les Ressources Favorites
+9.4.1. Ajouter une Ressource aux Favoris
+•	Endpoint : POST /content/resources/{resource_id}/favorite (Basé sur POST /api/resources/favorites )
+•	Authentification Requise : Oui
+•	Réponse de Succès (201 Created ou 200 OK si déjà favori) : json { "status": "favorited" }
+9.4.2. Retirer une Ressource des Favoris
+•	Endpoint : DELETE /content/resources/{resource_id}/favorite (Basé sur DELETE /api/resources/favorites/:id )
+•	Authentification Requise : Oui
+•	Réponse de Succès (204 No Content)
+9.4.3. Lister les Ressources Favorites
+•	Endpoint : GET /content/favorites (Basé sur GET /api/resources/favorites )
+•	Authentification Requise : Oui
+•	Paramètres de Requête : page, page_size, type
+•	Réponse de Succès (200 OK) : Structure similaire à GET /content/resources mais ne contenant que les favoris.
+9.5. Fil d'Actualités Communautaire (Modéré)
+9.5.1. Créer un Post dans le Fil d'Actualités
+•	Endpoint : POST /feed/posts 
+•	Authentification Requise : Oui (et utilisateur vérifié)
+•	Corps de la Requête (application/json ou multipart/form-data si image uploadée directement) : 
+JSON
+{
+  "content": "string", // Max 500 caractères [cite: 342]
+  "image_url": "string_or_null", // Si image déjà uploadée via un service (ex: Firebase Storage après pré-signature)
+  // OU champ 'image_file': file (si upload direct)
+  "tags": ["string"], // Optionnel
+  "allow_comments": "boolean" // Défaut true [cite: 342]
+}
+•	Réponse de Succès (202 Accepted) : 
+JSON
+{
+  "post_id": "string", // ID du post créé
+  "status": "pending_moderation",
+  "message": "Post soumis pour modération."
+}
+•	Réponses d'Erreur : 400 Bad Request, 403 Forbidden.
+9.5.2. Obtenir les Posts du Fil d'Actualités
+•	Endpoint : GET /feed/posts 
+•	Authentification Requise : Oui
+•	Paramètres de Requête : page, page_size, tag (optionnel ), sort ("recent", "popular" )
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "count": "integer", "next": "...", "previous": "...",
+  "results": [
+    {
+      "post_id": "string",
+      "author": { "user_id": "string", "display_name": "string", "profile_photo_url": "string" },
+      "content": "string",
+      "image_url": "string_or_null",
+      "tags": ["string"],
+      "created_at": "YYYY-MM-DDTHH:mm:ssZ",
+      "like_count": "integer",
+      "comment_count": "integer",
+      "is_liked_by_me": "boolean",
+      "allow_comments": "boolean"
+    }
+  ]
+}
+9.5.3. "Liker" / "Unliker" un Post
+•	Endpoint : POST /feed/posts/{post_id}/like 
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) : json { "post_id": "string", "like_count": "integer", "is_liked_by_me": "boolean" }
+9.5.4. Commenter un Post
+•	Endpoint : POST /feed/posts/{post_id}/comments 
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : json { "content": "string" } // Max 200 caractères 
+•	Réponse de Succès (201 Created) : Le commentaire créé (avec ID, auteur, contenu, timestamp). 
+JSON
+{
+  "comment_id": "string",
+  "post_id": "string",
+  "author": { "user_id": "string", "display_name": "string", "profile_photo_url": "string" },
+  "content": "string",
+  "created_at": "YYYY-MM-DDTHH:mm:ssZ",
+  "status": "approved" // ou "pending_moderation" si les commentaires sont modérés
+}
+9.5.5. Obtenir les Commentaires d'un Post
+•	Endpoint : GET /feed/posts/{post_id}/comments 
+•	Authentification Requise : Oui
+•	Paramètres de Requête : page, page_size
+•	Réponse de Succès (200 OK) : Liste paginée des commentaires.
+10. Endpoints de Gestion des Abonnements et Paiements (Premium)
+L'intégration se fera avec un fournisseur de paiement externe (MyCoolPay est mentionné ).
+10.1. Obtenir les Plans d'Abonnement Disponibles
+•	Endpoint : GET /subscriptions/plans 
+•	Description : Récupère la liste des plans d'abonnement premium.
+•	Authentification Requise : Oui (pour personnaliser les offres ou afficher le statut actuel)
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "plans": [
+    {
+      "plan_id": "string", // ex: "hivmeet_monthly", "hivmeet_annual"
+      "name": "string", // "Abonnement Mensuel", "Abonnement Annuel" (localisé)
+      "description": "string", // Description des avantages (localisé)
+      "price": "float", // Montant
+      "currency": "string", // ex: "EUR", "USD" [cite: 422] (localisé selon la région de l'utilisateur)
+      "billing_interval": "string", // "month", "year"
+      "features": ["string"], // Liste des fonctionnalités clés incluses (localisé)
+      "trial_period_days": "integer_or_null"
+    }
+  ]
+}
+10.2. Acheter ou Modifier un Abonnement
+•	Endpoint : POST /subscriptions/purchase (ou POST /subscriptions/change-plan )
+•	Description : L'utilisateur sélectionne un plan et procède au paiement. Le frontend interagit d'abord avec le SDK de MyCoolPay pour obtenir un payment_token.
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "plan_id": "string", // ID du plan sélectionné [cite: 345]
+  "payment_method_token": "string", // Token obtenu de MyCoolPay après que l'utilisateur ait entré ses détails de paiement [cite: 345]
+  "coupon_code": "string_or_null" // [cite: 345]
+}
+•	Réponse de Succès (201 Created ou 200 OK) : 
+JSON
+{
+  "subscription_id": "string",
+  "plan_id": "string",
+  "status": "string", // "active", "trialing", "pending_payment"
+  "current_period_start": "YYYY-MM-DDTHH:mm:ssZ",
+  "current_period_end": "YYYY-MM-DDTHH:mm:ssZ",
+  "auto_renew": "boolean", // [cite: 422]
+  "message": "Abonnement activé avec succès."
+}
+•	Réponses d'Erreur : 400 Bad Request (erreur de paiement, plan invalide ), 402 Payment Required (si une action de paiement supplémentaire est nécessaire), 403 Forbidden.
+10.3. Obtenir l'Abonnement Actuel de l'Utilisateur
+•	Endpoint : GET /subscriptions/current 
+•	Description : Récupère les détails de l'abonnement premium actuel de l'utilisateur.
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "subscription_id": "string_or_null", // Null si pas d'abonnement actif
+  "plan_id": "string_or_null",
+  "plan_name": "string_or_null", // localisé
+  "status": "string", // "active", "trialing", "past_due", "canceled", "expired", "none"
+  "current_period_start": "YYYY-MM-DDTHH:mm:ssZ_or_null",
+  "current_period_end": "YYYY-MM-DDTHH:mm:ssZ_or_null",
+  "auto_renew": "boolean_or_null",
+  "cancel_at_period_end": "boolean", // Si l'annulation est programmée
+  "features_summary": { // Pour un affichage rapide des avantages
+    "unlimited_likes": "boolean",
+    "can_see_likers": "boolean",
+    "can_rewind": "boolean",
+    "monthly_boosts_count": "integer",
+    "daily_super_likes_count": "integer",
+    "media_messaging_enabled": "boolean",
+    "audio_video_calls_enabled": "boolean"
+  }
+}
+•	Réponses d'Erreur : 401 Unauthorized.
+10.4. Annuler un Abonnement
+•	Endpoint : POST /subscriptions/current/cancel (Basé sur PUT /api/subscriptions/cancel )
+•	Description : L'utilisateur demande l'annulation de son abonnement. L'abonnement restera actif jusqu'à la fin de la période de facturation en cours.
+•	Authentification Requise : Oui
+•	Corps de la Requête (Optionnel, pour motifs d'annulation) : json { "reason": "string_or_null" }
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  // Statut de l'abonnement mis à jour, similaire à GET /subscriptions/current
+  "status": "canceled", // Indique que l'annulation est programmée
+  "cancel_at_period_end": true,
+  "current_period_end": "YYYY-MM-DDTHH:mm:ssZ",
+  "message": "Votre abonnement sera annulé à la fin de la période en cours."
+}
+•	Réponses d'Erreur : 401 Unauthorized, 404 Not Found (pas d'abonnement actif à annuler).
+10.5. Réactiver un Abonnement Annulé
+•	Endpoint : POST /subscriptions/current/reactivate 
+•	Description : Si un utilisateur a annulé son abonnement mais que la période n'est pas encore terminée, il peut le réactiver.
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) : Statut de l'abonnement mis à jour.
+•	Réponses d'Erreur : 401 Unauthorized, 400 Bad Request (non réactivable).
+10.6. Webhook de Paiement (Côté Backend)
+•	Endpoint : POST /webhooks/payments/mycoolpay (Basé sur POST /api/payment/webhook )
+•	Description : Endpoint sécurisé que MyCoolPay appellera pour notifier le backend des événements de paiement (ex: paiement réussi, échec, renouvellement, remboursement). Cet endpoint est pour le backend, le frontend n'interagit pas directement avec.
+•	Le frontend sera informé des changements de statut d'abonnement via des appels API ultérieurs (ex: GET /subscriptions/current) ou des notifications push.
+11. Endpoints de Paramètres Utilisateur et Préférences
+11.1. Gérer les Tokens FCM pour Notifications Push
+•	Endpoint : POST /user-settings/fcm-tokens (Basé sur POST /api/notifications/register-device )
+•	Description : Enregistre ou met à jour le token FCM de l'appareil de l'utilisateur.
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) :
+JSON
+{
+  "fcm_token": "string", // Token FCM actuel de l'appareil
+  "device_id": "string", // ID unique de l'appareil (généré/géré par le frontend)
+  "platform": "string" // "ios" ou "android"
+}
+•	Réponse de Succès (200 OK ou 201 Created) :
+json { "status": "fcm_token_registered" }
+•	Endpoint : DELETE /user-settings/fcm-tokens
+•	Description : Supprime le token FCM de l'appareil (ex: lors de la déconnexion ou de la désactivation des notifications).
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) :
+JSON
+{
+  "fcm_token": "string" // Token à supprimer, ou "all" pour supprimer tous les tokens de l'utilisateur
+}
+•	Réponse de Succès (204 No Content)
+11.2. Gérer les Préférences de Notification
+•	Endpoint : GET /user-settings/notification-preferences (Basé sur GET /api/notifications/settings )
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) :
+JSON
+{
+  "new_match_notifications": "boolean",
+  "new_message_notifications": "boolean",
+  "profile_like_notifications": "boolean", // Pour les premium
+  "app_update_notifications": "boolean",
+  "promotional_notifications": "boolean",
+  "do_not_disturb_settings": { // Optionnel
+    "enabled": "boolean",
+    "start_time_utc": "HH:mm", // ex: "22:00"
+    "end_time_utc": "HH:mm"   // ex: "07:00"
+  }
+}
+•	Endpoint : PUT /user-settings/notification-preferences (Basé sur PUT /api/notifications/settings )
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : La même structure que la réponse GET.
+•	Réponse de Succès (200 OK) : Les préférences mises à jour.
+11.3. Gérer les Préférences de Confidentialité et Visibilité
+•	Endpoint : GET /user-settings/privacy-preferences (Basé sur GET /api/privacy/settings )
+•	Authentification Requise : Oui
+•	Réponse de Succès (200 OK) :
+JSON
+{
+  "profile_visibility": "string", // Enum: "visible_to_all", "visible_to_matches_only", "incognito" (premium)
+  "show_online_status": "boolean",
+  "show_distance": "boolean", // Peut être plus granulaire: "exact", "approximate", "hidden"
+  "profile_discoverable": "boolean" // Permet d'être vu dans la section Découverte
+}
+•	Endpoint : PUT /user-settings/privacy-preferences
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : La même structure que la réponse GET.
+•	Réponse de Succès (200 OK) : Les préférences mises à jour.
+11.4. Gestion des Utilisateurs Bloqués
+11.4.1. Bloquer un Utilisateur
+•	Endpoint : POST /user-blocks (Basé sur POST /api/users/blocks )
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : json { "blocked_user_id": "string" 
+}
+•	Réponse de Succès (201 Created) : json { "status": "user_blocked", "blocked_user_id": "string" }
+•	Réponses d'Erreur : 404 Not Found (utilisateur à bloquer inexistant), 409 Conflict (déjà bloqué), 429 Too Many Requests (limite de blocages atteinte ).
+11.4.2. Obtenir la Liste des Utilisateurs Bloqués
+•	Endpoint : GET /user-blocks 
+•	Authentification Requise : Oui
+•	Paramètres de Requête : page, page_size
+•	Réponse de Succès (200 OK) : 
+JSON
+{
+  "count": "integer", "next": "...", "previous": "...",
+  "results": [
+    {
+      "blocked_user_id": "string",
+      "display_name": "string",
+      "profile_photo_url": "string",
+      "blocked_at": "YYYY-MM-DDTHH:mm:ssZ"
+    }
+  ]
+}
+11.4.3. Débloquer un Utilisateur
+•	Endpoint : DELETE /user-blocks/{blocked_user_id} (Basé sur DELETE /api/users/blocks/:id )
+•	Authentification Requise : Oui
+•	Paramètres d'URL : blocked_user_id: string
+•	Réponse de Succès (204 No Content)
+•	Réponses d'Erreur : 404 Not Found (utilisateur non trouvé dans la liste de blocage).
+11.5. Supprimer son Compte
+•	Endpoint : POST /user-accounts/me/delete-request (Basé sur POST /api/users/data-deletion )
+•	Description : Initie le processus de suppression de compte. Peut nécessiter une confirmation (ex: mot de passe, email).
+•	Authentification Requise : Oui
+•	Corps de la Requête (Optionnel, pour confirmation) : json { "password_confirmation": "string_or_null" }
+•	Réponse de Succès (202 Accepted) : 
+JSON
+{
+  "message": "Demande de suppression de compte reçue. Un email de confirmation a été envoyé.",
+  "deletion_scheduled_at": "YYYY-MM-DDTHH:mm:ssZ" // Période de grâce avant suppression effective
+}
+Ou suppression immédiate si pas de période de grâce/confirmation email.
+11.6. Exporter ses Données
+•	Endpoint : GET /user-accounts/me/export-data 
+•	Description : Permet à l'utilisateur de demander une exportation de ses données personnelles (conformité RGPD/CCPA).
+•	Authentification Requise : Oui
+•	Réponse de Succès (202 Accepted) : 
+JSON
+{
+  "message": "Votre demande d'exportation de données est en cours de traitement. Vous recevrez un email avec un lien de téléchargement lorsque ce sera prêt."
+}
+(Le backend génère ensuite le fichier et envoie un lien sécurisé).
+12. Endpoints de Modération et Signalement
+12.1. Signaler un Utilisateur ou un Contenu
+•	Endpoint : POST /reports 
+•	Description : Permet aux utilisateurs de signaler des profils, messages, ou posts de fil d'actualité pour comportement inapproprié ou autre violation.
+•	Authentification Requise : Oui
+•	Corps de la Requête (application/json) : 
+JSON
+{
+  "target_type": "string", // Enum: "user_profile", "message", "feed_post" [cite: 339]
+  "target_id": "string", // ID de l'élément signalé [cite: 339]
+  "reason_code": "string", // Enum: "spam", "harassment", "inappropriate_content", "fake_profile", "hate_speech", "impersonation", "other" (liste prédéfinie, localisable) [cite: 339]
+  "comments": "string", // Optionnel, détails supplémentaires fournis par l'utilisateur [cite: 339]
+  "screenshot_urls": ["string"] // Optionnel, URLs de captures d'écran (téléversées via un système de pré-signature similaire aux photos de profil) [cite: 339]
+}
+•	Réponse de Succès (201 Created) : 
+JSON
+{
+  "report_id": "string",
+  "status": "submitted",
+  "message": "Votre signalement a été reçu et sera examiné."
+}
+•	Réponses d'Erreur : 400 Bad Request, 404 Not Found (target_id inexistant).
+13. Modèles de Données Détaillés (Payloads API)
+Cette section récapitule et détaille les structures JSON complexes utilisées dans les requêtes et réponses, en s'appuyant sur les modèles décrits dans "Modèle de Données Backend - HIVMeet.pdf", "Modèle de Données Frontend - HIVMeet.pdf", "Spécifications Fonctionnelles Backend - HIVMeet.pdf" et "Spécifications Fonctionnelles Frontend - HIVMeet.pdf".
+(Note : Pour éviter une redondance excessive, les structures de payload ont été intégrées directement dans la description de chaque endpoint ci-dessus. Il est crucial que les champs, leurs types, leur optionalité et les validations correspondent aux spécifications des documents sources.)
+Points clés pour les Data Models Frontend et Backend (Interface API) :
+•	User Object (Minimal, pour contextes comme auteur de message/post) : 
+JSON
+{
+  "user_id": "string",
+  "display_name": "string",
+  "profile_photo_url": "string_or_null"
+}
+•	Profile Object (Public, pour affichage par d'autres) : 
+o	Défini dans la réponse de GET /user-profiles/{user_id}. Doit exclure les informations sensibles et respecter les paramètres de confidentialité de l'utilisateur cible.
+•	Profile Object (Privé/Complet, pour l'utilisateur connecté) : 
+o	Défini dans la réponse de GET /user-profiles/me. Contient toutes les informations modifiables et les préférences.
+•	Photo Object : 
+JSON
+{
+  "photo_id": "string",
+  "url": "string", // URL vers Firebase Storage [cite: 402]
+  "is_main": "boolean",
+  "caption": "string_or_null",
+  "uploaded_at": "YYYY-MM-DDTHH:mm:ssZ"
+}
+•	Match Object (pour listes) : 
+o	Défini dans la réponse de GET /matches.
+•	Conversation Object (pour listes) : 
+o	Défini dans la réponse de GET /conversations.
+•	Message Object : 
+o	Défini dans la réponse de GET /conversations/{conversation_id}/messages.
+•	Resource Object (pour listes et détail) : 
+o	Défini dans les réponses de GET /content/resources et GET /content/resources/{resource_id}.
+•	Feed Post Object : 
+o	Défini dans la réponse de GET /feed/posts.
+•	Subscription Plan Object : 
+o	Défini dans la réponse de GET /subscriptions/plans.
+•	Current Subscription Object : 
+o	Défini dans la réponse de GET /subscriptions/current.
+Enums Communs (Exemples à standardiser et localiser côté frontend) :
+•	VerificationStatus: "not_started", "pending_id", "pending_medical", "pending_selfie", "pending_review", "verified", "rejected", "expired" 
+•	RelationshipTypeSought: "friendship", "long_term_relationship", "short_term_relationship", "casual_dating", "networking"
+•	Gender: "male", "female", "non_binary", "trans_male", "trans_female", "other", "prefer_not_to_say"
+•	ReportReasonCode: "spam", "harassment", "inappropriate_content", "fake_profile", "hate_speech", "impersonation", "privacy_violation", "medical_misinformation", "other"
+•	CallType: "audio", "video" 
+•	CallTerminationReason: "declined", "ended_by_caller", "ended_by_callee", "no_answer", "connection_failed", "duration_limit_reached"
+•	ResourceType: "article", "video", "link", "contact_organization" 
+•	ProfileVisibility: "visible_to_all", "visible_to_matches_only", "incognito"
+14. Flux de Données Spécifiques
+14.1. Flux de Vérification d'Identité et Médicale
+1.	Frontend : GET /user-profiles/me/verification pour connaître le statut et les étapes requises. Si verification_selfie_code est fourni, l'afficher à l'utilisateur.
+2.	Frontend : Pour chaque document (identity_document, medical_document, selfie_with_code) : a. POST /user-profiles/me/verification/generate-upload-url avec document_type, file_type, file_size. b. Backend : Retourne upload_url (pour Firebase Storage) et file_path_on_storage. c. Frontend : Utilise l'upload_url pour téléverser le fichier directement sur Firebase Storage (requête PUT).
+3.	Frontend : Une fois un ou plusieurs documents téléversés avec succès : a. POST /user-profiles/me/verification/submit-documents avec la liste des document_type et leurs file_path_on_storage respectifs, et selfie_code_used si applicable.
+4.	Backend : Met à jour le statut de vérification (ex: pending_review), lance les processus de vérification internes (potentiellement avec des Cloud Functions ou des tâches admin).
+5.	Backend : Notifie le frontend du résultat via Push Notification (FCM) lorsque la vérification est complétée.
+6.	Frontend : Peut appeler GET /user-profiles/me/verification périodiquement ou après réception de la notification pour mettre à jour l'UI.
+14.2. Flux de Téléversement de Média dans un Message (Premium)
+1.	Frontend (Utilisateur sélectionne un média) : a. Appelle POST /user-profiles/me/verification/generate-upload-url (ou un endpoint similaire dédié aux médias de chat, ex: /conversations/generate-media-upload-url) avec document_type="chat_media", file_type, file_size. b. Backend : Retourne upload_url et file_path_on_storage. c. Frontend : Téléverse le média sur Firebase Storage.
+2.	Frontend (Média téléversé avec succès) : a. Appelle POST /conversations/{conversation_id}/messages avec type="image" (ou "video") et media_file_path_on_storage pointant vers le fichier sur Firebase Storage.
+3.	Backend : Crée le message, associe le média, et notifie les autres participants.
+Ce document de spécification d'interface devrait fournir une base solide pour les équipes de développement frontend et backend de HIVMeet. Il est crucial de le maintenir à jour au fur et à mesure de l'évolution du projet.
+

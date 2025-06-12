@@ -1,0 +1,27 @@
+INFO 2025-06-11 04:11:58,362 firebase_service 12012 632 Firebase Admin SDK initialized successfully
+============================================================
+HIVMeet Notification System - Comprehensive Test
+============================================================
+Testing notification functions...
+Traceback (most recent call last):
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\comprehensive_test.py", line 124, in main
+    test1 = test_notification_functions()
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\comprehensive_test.py", line 19, in test_notification_functions
+    print("\u2713 All task functions imported successfully")
+  File "C:\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2713' in position 0: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\comprehensive_test.py", line 141, in <module>
+    main()
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\comprehensive_test.py", line 136, in main
+    print(f"\U0001f4a5 Critical error during testing: {e}")
+  File "C:\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f4a5' in position 0: character maps to <undefined>

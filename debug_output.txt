@@ -1,0 +1,22 @@
+INFO 2025-06-11 03:52:17,991 firebase_service 8760 16456 Firebase Admin SDK initialized successfully
+Traceback (most recent call last):
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\debug_imports.py", line 22, in <module>
+    print("\u2713 User model imported successfully")
+  File "C:\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2713' in position 0: character maps to <undefined>
+Python path:
+  D:\Projets\HIVMeet\env\hivmeet_backend
+  C:\Python312\python312.zip
+  C:\Python312\DLLs
+  C:\Python312\Lib
+  C:\Python312
+  D:\Projets\HIVMeet\env
+  D:\Projets\HIVMeet\env\Lib\site-packages
+
+Current working directory: D:\Projets\HIVMeet\env\hivmeet_backend
+DJANGO_SETTINGS_MODULE: hivmeet_backend.settings
+Django version: 5.0.1
+Django setup successful
+Error: UnicodeEncodeError: 'charmap' codec can't encode character '\u2713' in position 0: character maps to <undefined>

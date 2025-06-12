@@ -1,0 +1,16 @@
+INFO 2025-06-11 03:57:25,654 firebase_service 15660 8692 Firebase Admin SDK initialized successfully
+=== VALIDATION DES TACHES DE NOTIFICATION ===
+
+Validation des dépendances...
+Traceback (most recent call last):
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\validate_tasks.py", line 119, in <module>
+    main()
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\validate_tasks.py", line 102, in main
+    results.append(validate_dependencies())
+                   ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\validate_tasks.py", line 89, in validate_dependencies
+    print(f"  \u2713 {name}: disponible")
+  File "C:\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2713' in position 2: character maps to <undefined>

@@ -1,0 +1,21 @@
+{% extends "authentication/emails/base_email.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Verify your email" %}{% endblock %}
+
+{% block content %}
+<h2>{% trans "Hello" %} {{ user.display_name }},</h2>
+
+<p>{% trans "Thank you for creating an account with HIVMeet. To complete your registration, please verify your email address by clicking the button below:" %}</p>
+
+<div style="text-align: center;">
+    <a href="{{ verification_link }}" class="button">{% trans "Verify Email" %}</a>
+</div>
+
+<p>{% trans "Or copy and paste this link into your browser:" %}</p>
+<p style="word-break: break-all;">{{ verification_link }}</p>
+
+<p>{% trans "This link will expire in 24 hours." %}</p>
+
+<p>{% trans "If you didn't create an account with HIVMeet, please ignore this email." %}</p>
+{% endblock %}

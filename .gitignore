@@ -1,0 +1,16 @@
+# ... existing content ...
+
+# Firebase credentials
+credentials/
+*.json
+!google-services.json
+
+# Environment files
+.env
+.env.*
+
+# Media files
+media/
+
+# Static files
+staticfiles/
