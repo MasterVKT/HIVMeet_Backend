@@ -2,6 +2,7 @@
 API URL configuration for HIVMeet backend.
 """
 from django.urls import path, include
+from subscriptions.views import mycoolpay_webhook
 
 app_name = 'api'
 
@@ -23,9 +24,11 @@ urlpatterns = [
     path('content/', include('resources.urls')),
     path('feed/', include('resources.urls_feed')),
     # Subscription endpoints
-    # path('subscriptions/', include('subscriptions.urls')),
+    path('subscriptions/', include('subscriptions.urls')),
       # User settings endpoints
     path('user-settings/', include('profiles.urls_settings')),
+
+    path('webhooks/payments/mycoolpay/', mycoolpay_webhook, name='mycoolpay-webhook'),
     
     # Reporting endpoints
     # path('reports/', include('moderation.urls')),

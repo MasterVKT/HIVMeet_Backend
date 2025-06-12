@@ -16,7 +16,7 @@ def test_notification_functions():
     from messaging.tasks import send_message_notification, send_call_notification
     from matching.tasks import send_match_notification, send_like_notification
     
-    print("✓ All task functions imported successfully")
+    print("[OK] All task functions imported successfully")
     
     # Test function signatures and docstrings
     functions_to_test = [
@@ -124,16 +124,15 @@ def main():
         test1 = test_notification_functions()
         test2 = test_dependencies()
         test3 = check_potential_issues()
-        
         print("\n" + "=" * 60)
         if all([test1, test2, test3]):
-            print("🎉 ALL TESTS PASSED - No errors detected!")
-            print("✓ The notification system is ready for use.")
+            print("[SUCCESS] ALL TESTS PASSED - No errors detected!")
+            print("[OK] The notification system is ready for use.")
         else:
-            print("⚠️  Some tests failed - Please review the issues above.")
+            print("[WARNING] Some tests failed - Please review the issues above.")
             
     except Exception as e:
-        print(f"💥 Critical error during testing: {e}")
+        print(f"[ERROR] Critical error during testing: {e}")
         import traceback
         traceback.print_exc()
 

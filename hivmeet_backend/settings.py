@@ -29,8 +29,9 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    
-    # Third party apps
+      # Third party apps
+    'rest_framework',
+    'rest_framework_simplejwt',
     'corsheaders',
     # 'drf_yasg',
     # 'rosetta',
@@ -40,7 +41,7 @@ INSTALLED_APPS = [
     'matching',
     'messaging',
     # 'verification',
-    # 'subscriptions',
+    'subscriptions',
     'resources',
 ]
 
@@ -63,6 +64,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'subscriptions.middleware.PremiumRequiredMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'django.middleware.locale.LocaleMiddleware',
@@ -224,6 +226,35 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 CELERY_ENABLE_UTC = True
 
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    'check-subscription-expirations': {
+        'task': 'subscriptions.tasks.check_subscription_expirations',
+        'schedule': crontab(minute=0),  # Every hour
+    },
+    'send-expiration-reminders': {
+        'task': 'subscriptions.tasks.send_expiration_reminders',
+        'schedule': crontab(hour=9, minute=0),  # Daily at 9 AM
+    },
+    'reset-daily-counters': {
+        'task': 'subscriptions.tasks.reset_daily_counters',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight
+    },
+    'reset-monthly-counters': {
+        'task': 'subscriptions.tasks.reset_monthly_counters',
+        'schedule': crontab(hour=0, minute=30),  # Daily at 00:30
+    },
+    'retry-failed-payments': {
+        'task': 'subscriptions.tasks.retry_failed_payments',
+        'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours
+    },
+    'clean-old-webhook-events': {
+        'task': 'subscriptions.tasks.clean_old_webhook_events',
+        'schedule': crontab(hour=2, minute=0, day_of_week=1),  # Weekly on Monday at 2 AM
+    },
+}
+
 # Firebase configuration
 FIREBASE_CREDENTIALS_PATH = BASE_DIR / 'credentials' / 'hivmeet_firebase_credentials.json'
 FIREBASE_STORAGE_BUCKET = 'hivmeet-f76f8.firebasestorage.app'
@@ -249,8 +280,7 @@ LOGGING = {
         'verbose': {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
             'style': '{',
-        },
-        'simple': {
+        },        'simple': {
             'format': '{levelname} {message}',
             'style': '{',
         },
@@ -260,7 +290,8 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose'
         },
-    },    'root': {
+    },
+    'root': {
         'handlers': ['console'],
         'level': 'INFO',
     },
@@ -277,6 +308,14 @@ LOGGING = {
         },
     },
 }
+
+# MyCoolPay Payment Configuration
+MYCOOLPAY_API_KEY = os.environ.get('MYCOOLPAY_API_KEY', '')
+MYCOOLPAY_API_SECRET = os.environ.get('MYCOOLPAY_API_SECRET', '')
+MYCOOLPAY_BASE_URL = os.environ.get('MYCOOLPAY_BASE_URL', 'https://api.mycoolpay.com/v1')
+MYCOOLPAY_WEBHOOK_SECRET = os.environ.get('MYCOOLPAY_WEBHOOK_SECRET', '')
+MYCOOLPAY_WEBHOOK_URL = os.environ.get('MYCOOLPAY_WEBHOOK_URL', f'{FRONTEND_URL}/api/v1/webhooks/payments/mycoolpay')
+
 
 # Security settings
 if not DEBUG:
