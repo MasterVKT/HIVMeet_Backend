@@ -123,6 +123,32 @@ class SendMessageSerializer(serializers.Serializer):
         return attrs
 
 
+class SendMediaMessageSerializer(serializers.Serializer):
+    """
+    Serializer for sending media messages (Premium feature).
+    """
+    media_file = serializers.FileField(required=True)
+    media_type = serializers.ChoiceField(
+        choices=['image', 'video', 'audio'],
+        default='image'
+    )
+    text = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500
+    )
+    
+    def validate_media_file(self, value):
+        """Validate media file size and type."""
+        # Max file size: 10MB
+        if value.size > 10 * 1024 * 1024:
+            raise serializers.ValidationError(
+                _('File size must be less than 10MB.')
+            )
+        
+        return value
+
+
 class MarkAsReadSerializer(serializers.Serializer):
     """
     Serializer for marking messages as read.

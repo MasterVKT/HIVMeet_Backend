@@ -5,17 +5,19 @@ Django settings for HIVMeet backend project.
 from pathlib import Path
 from datetime import timedelta
 import os
+from decouple import config, Csv
+import dj_database_url
 
 # Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-your-secret-key-here'
+SECRET_KEY = config('SECRET_KEY', default='django-insecure-your-secret-key-here')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,10.0.2.2,0.0.0.0', cast=Csv())
 
 # Application definition
 INSTALLED_APPS = [
@@ -33,7 +35,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
-    # 'drf_yasg',
+    'drf_yasg',
     # 'rosetta',
     
     # Other local apps (to be added)
@@ -55,7 +57,7 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 # Frontend URL for email links
-FRONTEND_URL = 'http://localhost:3000'
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -65,6 +67,7 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'subscriptions.middleware.PremiumRequiredMiddleware',
+    'hivmeet_backend.middleware.PremiumStatusMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'django.middleware.locale.LocaleMiddleware',
@@ -97,14 +100,9 @@ WSGI_APPLICATION = 'hivmeet_backend.wsgi.application'
 
 # Database
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'hivmeet_db',
-        'USER': 'postgres',
-        'PASSWORD': 'postgres',
-        'HOST': 'localhost',
-        'PORT': '5432',
-    }
+    'default': dj_database_url.config(
+        default=config('DATABASE_URL', default='postgresql://postgres:postgres@localhost:5432/hivmeet_db')
+    )
 }
 
 # Password validation
@@ -127,6 +125,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Internationalization
+# Par défaut FR, mais `LocaleMiddleware` respecte `Accept-Language`
 LANGUAGE_CODE = 'fr'
 TIME_ZONE = 'UTC'
 USE_I18N = True
@@ -159,9 +158,9 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
-    'DEFAULT_PERMISSION_CLASSES': [
+    'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
-    ],
+    ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_RENDERER_CLASSES': [
@@ -177,10 +176,10 @@ REST_FRAMEWORK = {
 
 # JWT Settings
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
-    'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
+    'ROTATE_REFRESH_TOKENS': False,
+    'BLACKLIST_AFTER_ROTATION': False,
     'UPDATE_LAST_LOGIN': True,
     
     'ALGORITHM': 'HS256',
@@ -198,10 +197,14 @@ SIMPLE_JWT = {
     'TOKEN_TYPE_CLAIM': 'token_type',
 }
 
-# CORS settings
+# CORS settings - Configuration pour Flutter et développement
+CORS_ALLOW_ALL_ORIGINS = True  # Temporaire pour diagnostic/développement
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
-    'http://localhost:8080'
+    'http://localhost:8080',
+    'http://10.0.2.2:8000',
+    'http://127.0.0.1:8000',
+    'http://0.0.0.0:8000'
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -215,11 +218,30 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-firebase-token',  # Pour Flutter Firebase
 ]
 
-# Celery Configuration
-CELERY_BROKER_URL = 'redis://localhost:6379/0'
-CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH', 
+    'POST',
+    'PUT',
+]
+
+# Permettre toutes les origines pour Flutter (développement)
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://10\.0\.2\..*",      # Émulateur Android
+    r"^http://127\.0\.0\.1:.*",   # Localhost
+    r"^http://localhost:.*",      # Localhost alternative
+]
+
+# Celery Configuration (temporairement désactivé pour le développement)
+# CELERY_BROKER_URL = 'redis://localhost:6379/0'
+# CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_BROKER_URL = 'memory://'
+CELERY_RESULT_BACKEND = 'rpc://'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -256,13 +278,47 @@ CELERY_BEAT_SCHEDULE = {
 }
 
 # Firebase configuration
-FIREBASE_CREDENTIALS_PATH = BASE_DIR / 'credentials' / 'hivmeet_firebase_credentials.json'
-FIREBASE_STORAGE_BUCKET = 'hivmeet-f76f8.firebasestorage.app'
+
+# Configuration Firebase (restaurer chemin original)
+FIREBASE_CREDENTIALS_PATH = config(
+    'FIREBASE_CREDENTIALS_PATH', 
+    default=BASE_DIR / 'credentials' / 'hivmeet_firebase_credentials.json'
+)
+
+# Ajouter init si pas déjà (fusion)
+
+FIREBASE_STORAGE_BUCKET = config(
+    'FIREBASE_STORAGE_BUCKET', 
+    default='hivmeet-f76f8.firebasestorage.app'
+)
 
 # Email configuration
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # For development
-DEFAULT_FROM_EMAIL = 'HIVMeet <noreply@hivmeet.com>'
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND', 
+    default='django.core.mail.backends.console.EmailBackend'
+)
+DEFAULT_FROM_EMAIL = config(
+    'DEFAULT_FROM_EMAIL', 
+    default='HIVMeet <noreply@hivmeet.com>'
+)
 EMAIL_SUBJECT_PREFIX = '[HIVMeet] '
+
+# MyCoolPay Configuration
+MYCOOLPAY_API_KEY = config('MYCOOLPAY_API_KEY', default='')
+MYCOOLPAY_API_SECRET = config('MYCOOLPAY_API_SECRET', default='')
+MYCOOLPAY_BASE_URL = config('MYCOOLPAY_BASE_URL', default='https://api.mycoolpay.com/v1')
+MYCOOLPAY_WEBHOOK_SECRET = config('MYCOOLPAY_WEBHOOK_SECRET', default='')
+
+# Cache configuration (Redis)
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+    }
+}
+
+# Session configuration
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 
 # In production, use real email service:
 # EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'

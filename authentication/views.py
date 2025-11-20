@@ -31,11 +31,18 @@ from .utils import (
     send_welcome_email
 )
 from hivmeet_backend.firebase_service import firebase_service
+from firebase_admin import auth
 
 import logging
 import secrets
 import hashlib
 from django.utils import timezone
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from firebase_admin import auth as firebase_auth
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import get_user_model
 
 logger = logging.getLogger('hivmeet.auth')
 User = get_user_model()
@@ -62,6 +69,99 @@ def generate_verification_token():
     Generate a secure verification token.
     """
     return secrets.token_urlsafe(32)
+
+
+class FirebaseLoginView(APIView):
+    permission_classes = [AllowAny]
+    
+    @transaction.atomic
+    def post(self, request):
+        # Conserver logs et validation existante
+        logger.info("🔄 Tentative d'échange token Firebase...")
+        
+        # Accepte id_token (préféré) ou firebase_token pour compatibilité
+        id_token = request.data.get('id_token') or request.data.get('firebase_token')
+        if not id_token:
+            logger.warning("🚫 ID token missing in request")
+            return Response({'error': 'ID token requis'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            decoded_token = firebase_auth.verify_id_token(id_token)
+            uid = decoded_token['uid']
+            email = decoded_token.get('email')
+            # Conserver extraction existante (name, email_verified)
+            name = decoded_token.get('name', '')
+            email_verified = decoded_token.get('email_verified', False)
+            
+            if not email:
+                logger.warning(f"🚫 Email manquant dans token pour UID: {uid}")
+                return Response({'error': 'Email requis'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Conserver création/maj user existante (plus détaillée)
+            User = get_user_model()
+            try:
+                user = User.objects.get(email=email)
+                created = False
+                if not user.firebase_uid:
+                    user.firebase_uid = uid
+                    user.save()
+            except User.DoesNotExist:
+                try:
+                    user = User.objects.get(firebase_uid=uid)
+                    created = False
+                    if user.email != email:
+                        user.email = email
+                        user.save()
+                except User.DoesNotExist:
+                    from datetime import date
+                    default_birth_date = date(1990, 1, 1)
+                    user = User.objects.create(
+                        email=email,
+                        firebase_uid=uid,
+                        display_name=name.split(' ')[0] if name else email.split('@')[0],
+                        email_verified=email_verified,
+                        birth_date=default_birth_date,
+                        is_active=True
+                    )
+                    created = True
+            
+            if not created and user.firebase_uid != uid:
+                return Response({'error': 'UID mismatch'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if email_verified and not user.email_verified:
+                user.email_verified = True
+                user.save()
+            
+            user.update_last_active()
+            
+            # Générer JWT comme instructions
+            refresh = RefreshToken.for_user(user)
+            logger.info(f"🎯 Tokens générés pour ID: {user.id}")
+            
+            return Response({
+                # Clés standardisées
+                'access_token': str(refresh.access_token),
+                'refresh_token': str(refresh),
+                # Alias pour rétrocompatibilité avec divers clients
+                'token': str(refresh.access_token),
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+                'user': {  # Conserver réponse user existante
+                    'id': user.id,
+                    'email': user.email,
+                    'display_name': user.display_name,
+                    'firebase_uid': uid,
+                    'email_verified': user.email_verified
+                }
+            }, status=status.HTTP_200_OK)
+        
+        except firebase_auth.InvalidIdTokenError:
+            return Response({'error': 'Token invalide'}, status=status.HTTP_400_BAD_REQUEST)
+        except firebase_auth.ExpiredIdTokenError:
+            return Response({'error': 'Token expiré'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"💥 Erreur: {str(e)}")
+            return Response({'error': f'Erreur serveur: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -388,8 +488,13 @@ def refresh_token_view(request):
         new_refresh_token = str(refresh)  # Rotates the refresh token
         
         return Response({
+            # Clés standardisées
             'access_token': new_access_token,
-            'refresh_token': new_refresh_token
+            'refresh_token': new_refresh_token,
+            # Alias pour compatibilité
+            'token': new_access_token,
+            'access': new_access_token,
+            'refresh': new_refresh_token
         }, status=status.HTTP_200_OK)
         
     except TokenError as e:

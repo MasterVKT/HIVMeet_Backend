@@ -1,0 +1,21 @@
+INFO 2025-06-19 12:43:11,801 firebase_service 5960 10352 Firebase Admin SDK initialized successfully
+=== TESTING PREMIUM FEATURES INTEGRATION ===
+
+1. Testing premium utilities import...
+[OK] Premium utilities imported successfully
+
+2. Testing premium middleware import...
+[OK] Premium middleware imported successfully
+
+3. Testing matching premium views import...
+[OK] Matching premium views imported successfully
+
+4. Testing messaging premium views import...
+[ERROR] Failed to import messaging premium views: cannot import name 'SendMediaMessageSerializer' from 'messaging.serializers' (D:\Projets\HIVMeet\env\hivmeet_backend\messaging\serializers.py)
+
+=== TESTING PREMIUM SERVICES ===
+
+[OK] Premium services initialized successfully
+[ERROR] Premium services test failed: 'mycoolpay_service'
+
+[WARNING] Some premium integration tests failed.

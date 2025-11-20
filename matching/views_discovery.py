@@ -55,15 +55,13 @@ def get_discovery_profiles(request):
     # Serialize profiles
     serializer = DiscoveryProfileSerializer(profiles, many=True)
     
-    # Build response with pagination info
-    response_data = {
-        'count': len(profiles),  # This would be total count in production
-        'next': f"?page={page + 1}" if len(profiles) == page_size else None,
-        'previous': f"?page={page - 1}" if page > 1 else None,
+    # Build response with pagination info (standardised keys)
+    return Response({
+        'count': len(profiles),  # TODO: remplacer par total réel si dispo
+        'next': f"?page={page + 1}&page_size={page_size}" if len(profiles) == page_size else None,
+        'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
         'results': serializer.data
-    }
-    
-    return Response(response_data, status=status.HTTP_200_OK)
+    }, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])

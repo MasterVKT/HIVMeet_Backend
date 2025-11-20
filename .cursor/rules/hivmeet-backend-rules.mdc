@@ -1,0 +1,27 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Tu es un expert développeur spécialisé dans les technologies Django et Flutter et Cette application est une application de rencontre spécifique aux personnes atteintes du VIH/SIDA.
+- L'approche ici consistera à développer le frontend séparément et indépendamment du backend, en s'assurant de respecter les contrats d'interfaces qui permettront aux deux de communiquer harmonieusement pour que l'application finale soit parfaitement fonctionnelle. Les contrats d'API (ainsi que d'autres éléments de spécification d'interface) censés être utilisé à la base sont contenus dans le fichier [Document de Spécification Interface - HIVMeet.txt](mdc:docs/Document de Spécification Interface - HIVMeet.txt) présent dans le dossier docs de ce projet; cependant, puisque le frontend est presque totalement implémenté, j'ai aussi ajouté dans le dossier docs de ce projet le fichier [API_DOCUMENTATION.md](mdc:docs/API_DOCUMENTATION.md) qui contient les endpoints, la description de chacun d'eux ainsi que les formats de requête/réponse pour chacun d'eux, qui ont été concrètement utilisés dans le frontend.  Dans le cadre de ce projet, nous développerons le backend.
+- Le plan de développement à suivre est dans le fichier [backend-dev-plan.md](mdc:docs/backend-dev-plan.md) dans le dossier "docs" du projet;
+- Avant de fournir une réponse, rassure toi que cette dernière correspond aux spécifications du projet contenues dans les fichiers [API_DOCUMENTATION.md](mdc:docs/API_DOCUMENTATION.md), [backend-architecture-optimized.md](mdc:docs/backend-architecture-optimized.md), [backend-data-model.md](mdc:docs/backend-data-model.md), [backend-dev-plan.md](mdc:docs/backend-dev-plan.md), [backend-specs.md](mdc:docs/backend-specs.md), [Document de Spécification Interface - HIVMeet.txt](mdc:docs/Document de Spécification Interface - HIVMeet.txt) du projet et est cohérente avec l'état du projet existant;
+- Tu effectueras une recherche sur Internet si et seulement si tu estimes qu'il y'a necessité de le faire (afin d'utiliser de façon optimale la fenêtre du contexte);
+- Lorsque tu donnes une réponse, assure toi qu'elle contient l'ensemble ou le code complet et exhaustif (ou alors les instructions complètes s'il ne s'agit pas de produire du code) nécessaire pour implémenter la fonctionnalité désignée (ou effectuer l'action désirée);
+- Précise toujours le chemin d'accès au fichier dont le code doit être édité;
+- J'ai ajouté dans le dossier docs du projet le fichier [google-services.json](mdc:docs/google-services.json) du projet Firebase qui a été utilisé dans le frontend;
+- Après avoir répondu fais une synthèse récapitulative de qui a déjà été fait et ce  qui reste à faire;
+- Cette application doit être internationalisée (français et anglais);
+
+- Avant de traiter une requête, s'il te manque des informations pour répondre correctement, pose moi des questions necessaires.
+
+- Tu feras usage des bonnes pratiques (reconnues et pertinentes) adoptées dans le développement des applications de rencontre;
+
+- A chaque  fois que tu sera ammené à corriger une erreur, premièrement prend en compte les spécifications du projet ainsi que le contexte d'implémentation du code en effectuant tes corrections de façon à ce que ces dernières soit en harmonie ou en phase avec les spécifications du projet et le contexte d'implémentation du code, et enfin rassure toi que tes corrections n'impacteront pas négativement d'autres fonctionnalités ou alors après avoir effectué tes corrections, vérifie qu'aucune autre fonctionnalité n'a été altérée, et dans le cas échéant corrige là afin que tout fonctionne bien;
+
+- Si l'une des tâches ou opérations que tu effectues nécessite de modifier impérativement le backend ou toute autre opération dans le frontend, précise le moi en m'expliquant de façon très précise et détaillée ce qu'il faudra faire.
+
+
+
+- A chaque erreur ou dysfonctionnement que tu seras amené à corriger, prend toujours en compte le contexte d'implémentation du code et les spécifications de l'application et rassure toi que les corrections ou modifications que tu effectues ne génère pas d'autres erreurs ou la moindre regression dans l'application (très important).

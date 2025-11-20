@@ -7,8 +7,12 @@ from matching import views_discovery
 app_name = 'discovery'
 
 urlpatterns = [
-    # Discovery profiles
+    # Discovery profiles - endpoint principal pour le frontend
+    path('', views_discovery.get_discovery_profiles, name='discovery'),
+    # Discovery profiles - alias pour compatibilité
     path('profiles', views_discovery.get_discovery_profiles, name='profiles'),
+    # Conserver un alias legacy éventuel pour stabilité (optionnel)
+    # path('list', views_discovery.get_discovery_profiles, name='list'),
     
     # Interactions
     path('interactions/like', views_discovery.like_profile, name='like'),

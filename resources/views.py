@@ -106,11 +106,11 @@ def get_resources(request):
         context={'request': request, 'language': language}
     )
     
-    # Build response
+    # Build response (standardised pagination keys)
     return Response({
-        'count': len(resources),  # Would need total count for proper pagination
-        'next': f"?page={page + 1}" if len(resources) == page_size else None,
-        'previous': f"?page={page - 1}" if page > 1 else None,
+        'count': len(resources),  # TODO: remplacer par total réel si dispo
+        'next': f"?page={page + 1}&page_size={page_size}" if len(resources) == page_size else None,
+        'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
         'results': serializer.data
     }, status=status.HTTP_200_OK)
 
@@ -203,11 +203,11 @@ def get_favorite_resources(request):
         context={'request': request, 'language': language}
     )
     
-    # Build response
+    # Build response (standardised pagination keys)
     return Response({
         'count': len(favorites),
-        'next': f"?page={page + 1}" if len(favorites) == page_size else None,
-        'previous': f"?page={page - 1}" if page > 1 else None,
+        'next': f"?page={page + 1}&page_size={page_size}" if len(favorites) == page_size else None,
+        'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
         'results': serializer.data
     }, status=status.HTTP_200_OK)
 
@@ -282,11 +282,11 @@ def get_feed_posts(request):
     # Serialize
     serializer = FeedPostSerializer(posts, many=True)
     
-    # Build response
+    # Build response (standardised pagination keys)
     return Response({
         'count': len(posts),
-        'next': f"?page={page + 1}" if len(posts) == page_size else None,
-        'previous': f"?page={page - 1}" if page > 1 else None,
+        'next': f"?page={page + 1}&page_size={page_size}" if len(posts) == page_size else None,
+        'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
         'results': serializer.data
     }, status=status.HTTP_200_OK)
 
@@ -376,10 +376,10 @@ def get_post_comments(request, post_id):
     # Serialize
     serializer = FeedCommentSerializer(comments, many=True)
     
-    # Build response
+    # Build response (standardised pagination keys)
     return Response({
         'count': len(comments),
-        'next': f"?page={page + 1}" if len(comments) == page_size else None,
-        'previous': f"?page={page - 1}" if page > 1 else None,
+        'next': f"?page={page + 1}&page_size={page_size}" if len(comments) == page_size else None,
+        'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
         'results': serializer.data
     }, status=status.HTTP_200_OK)

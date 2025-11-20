@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "634137235718",
+    "project_id": "hivmeet-f76f8",
+    "storage_bucket": "hivmeet-f76f8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:634137235718:android:bd7e7f742a74112f50ce87",
+        "android_client_info": {
+          "package_name": "com.hivmeet.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "634137235718-0e8npjn2m2qa5uohi813nb8jc4b3d5oc.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.hivmeet.app",
+            "certificate_hash": "92ee4d47c192b2a7a309bb3e51b56d1b200cbd57"
+          }
+        },
+        {
+          "client_id": "634137235718-7h465mn31e5bhke3u325bmm799s5ibm6.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_Osga8cc7BEyXYP7hEsmH1yE4i5tctgo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "634137235718-7h465mn31e5bhke3u325bmm799s5ibm6.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "634137235718-bnisegqlgjai9qmol9um8u0mtb7j3iud.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.hivmeet.hivmeet"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

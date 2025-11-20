@@ -4,6 +4,8 @@ Views for messaging app.
 from rest_framework import generics, status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.views import APIView
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Q, F
@@ -17,12 +19,18 @@ from .serializers import (
     MessageSerializer,
     ConversationSerializer,
     SendMessageSerializer,
+    SendMediaMessageSerializer,
     MarkAsReadSerializer,
     CallSerializer,
     InitiateCallSerializer,
     AnswerCallSerializer,
     IceCandidateSerializer,
     EndCallSerializer
+)
+from subscriptions.utils import (
+    check_feature_availability, 
+    premium_required_response,
+    is_premium_user
 )
 
 logger = logging.getLogger('hivmeet.messaging')
@@ -84,7 +92,10 @@ def get_conversation_messages(request, conversation_id):
         }, status=status.HTTP_404_NOT_FOUND)
     
     # Get query parameters
-    limit = int(request.query_params.get('limit', 50))
+    # Standardise: support page/page_size en plus de limit
+    page = int(request.query_params.get('page', 1))
+    page_size = int(request.query_params.get('page_size', 50))
+    limit = int(request.query_params.get('limit', page_size))
     before_message_id = request.query_params.get('before_message_id')
     
     # Get messages
@@ -103,11 +114,23 @@ def get_conversation_messages(request, conversation_id):
     # Serialize messages
     serializer = MessageSerializer(messages, many=True, context={'request': request})
     
+    # Build standardised pagination keys (best-effort when using before_message_id)
+    next_link = None
+    prev_link = None
+    if not before_message_id:
+        if len(messages) == limit:
+            next_link = f"?page={page + 1}&page_size={limit}"
+        if page > 1:
+            prev_link = f"?page={page - 1}&page_size={limit}"
+
     return Response({
-        'count': len(messages),
+        'count': total_count,
+        'next': next_link,
+        'previous': prev_link,
+        'results': serializer.data,
+        # Champs supplémentaires conservés pour compatibilité
         'has_more': has_more,
-        'show_premium_prompt': show_premium_prompt,
-        'results': serializer.data
+        'show_premium_prompt': show_premium_prompt
     }, status=status.HTTP_200_OK)
 
 
@@ -462,3 +485,124 @@ def end_call(request, call_id):
         'duration_seconds': call.duration_seconds,
         'message': _('Call ended.')
     }, status=status.HTTP_200_OK)
+
+
+class SendMediaMessageView(APIView):
+    """
+    Send media message (Premium only).
+    POST /api/v1/conversations/{conversation_id}/messages/media/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+    
+    def post(self, request, conversation_id):
+        # Check premium status
+        feature_check = check_feature_availability(request.user, 'media_messaging')
+        if not feature_check['available']:
+            return premium_required_response()
+        
+        try:
+            # Get match/conversation
+            match = get_object_or_404(
+                Match.objects.filter(
+                    Q(user1=request.user) | Q(user2=request.user)
+                ),
+                id=conversation_id
+            )
+            
+            # Validate media file
+            if 'media_file' not in request.FILES:
+                return Response({
+                    'success': False,
+                    'message': _('Media file is required')
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            media_file = request.FILES['media_file']
+            media_type = request.data.get('media_type', 'image')
+            
+            # Validate file size (max 10MB)
+            if media_file.size > 10 * 1024 * 1024:
+                return Response({
+                    'success': False,
+                    'message': _('File size must be less than 10MB')
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create media message using service
+            message = MessageService.create_media_message(
+                sender=request.user,
+                match=match,
+                media_file=media_file,
+                media_type=media_type,
+                text=request.data.get('text', '')
+            )
+            
+            serializer = MessageSerializer(message, context={'request': request})
+            
+            logger.info(f"Media message sent from {request.user.id} to match {conversation_id}")
+            
+            return Response({
+                'success': True,
+                'message': serializer.data
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Media message failed from {request.user.id}: {str(e)}")
+            return Response({
+                'success': False,
+                'message': _('Failed to send media message')
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class InitiatePremiumCallView(APIView):
+    """
+    Initiate audio/video call (Premium only).
+    POST /api/v1/calls/initiate-premium/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        # Check premium status
+        feature_check = check_feature_availability(request.user, 'calls')
+        if not feature_check['available']:
+            return premium_required_response()
+        
+        try:
+            serializer = InitiateCallSerializer(
+                data=request.data,
+                context={'request': request}
+            )
+            
+            if not serializer.is_valid():
+                return Response({
+                    'success': False,
+                    'errors': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create call using service
+            call = CallService.initiate_call(
+                caller=request.user,
+                callee_id=serializer.validated_data['callee_id'],
+                call_type=serializer.validated_data['call_type']
+            )
+            
+            if not call:
+                return Response({
+                    'success': False,
+                    'message': _('Cannot initiate call at this time')
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            call_serializer = CallSerializer(call, context={'request': request})
+            
+            logger.info(f"Premium call initiated from {request.user.id} to {serializer.validated_data['callee_id']}")
+            
+            return Response({
+                'success': True,
+                'call': call_serializer.data
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Premium call initiation failed from {request.user.id}: {str(e)}")
+            return Response({
+                'success': False,
+                'message': _('Failed to initiate call')
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -63,7 +63,7 @@ sendgrid==6.11.0  # Alternative email service
 
 # Security
 django-csp==3.7
-django-security==0.17.0
+django-security==0.11.2
 
 # Performance
 django-cachalot==2.6.1  # Query caching

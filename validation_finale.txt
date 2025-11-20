@@ -1,0 +1,16 @@
+INFO 2025-06-19 17:41:43,183 firebase_service 21884 6504 Firebase Admin SDK initialized successfully
+============================================================
+VALIDATION FINALE SYSTÈME PREMIUM HIVMEET
+============================================================
+Traceback (most recent call last):
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\validate_premium_final.py", line 143, in <module>
+    success = validate_premium_system()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\validate_premium_final.py", line 44, in validate_premium_system
+    from messaging.views import SendMediaMessageView, InitiatePremiumCallView
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\messaging\views.py", line 18, in <module>
+    from .serializers import (
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\messaging\serializers.py", line 50
+    model = Match        fields = [
+                         ^^^^^^
+SyntaxError: invalid syntax

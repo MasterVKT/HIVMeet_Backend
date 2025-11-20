@@ -1,5 +1,5 @@
 """
-Serializers for matching app.
+Serializers for matching app with premium features integration.
 """
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -7,6 +7,7 @@ from django.utils.translation import gettext_lazy as _
 
 from .models import Like, Match, Boost
 from profiles.serializers import PublicProfileSerializer
+from subscriptions.utils import is_premium_user, get_premium_limits
 
 User = get_user_model()
 
@@ -15,12 +16,11 @@ class LikeSerializer(serializers.ModelSerializer):
     """
     Serializer for likes.
     """
-    from_user = serializers.StringRelatedField()
-    to_user = serializers.StringRelatedField()
-    
+    target_user_id = serializers.CharField(source='target_user.id', read_only=True)
+
     class Meta:
         model = Like
-        fields = ['id', 'from_user', 'to_user', 'like_type', 'created_at']
+        fields = ['id', 'target_user_id', 'is_super_like', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
@@ -30,47 +30,172 @@ class MatchSerializer(serializers.ModelSerializer):
     """
     matched_user = serializers.SerializerMethodField()
     unread_count_for_me = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Match
         fields = [
-            'id', 'matched_user', 'status', 'created_at',
-            'last_message_at', 'last_message_preview',
+            'id', 'matched_user', 'created_at',
             'unread_count_for_me'
         ]
         read_only_fields = ['id', 'created_at']
-    
+
     def get_matched_user(self, obj):
         """Get the other user in the match."""
         request = self.context.get('request')
         if request and request.user:
-            other_user = obj.get_other_user(request.user)
+            other_user = obj.user2 if obj.user1 == request.user else obj.user1
+            from profiles.serializers import PublicProfileSerializer
+            return PublicProfileSerializer(
+                other_user.profile,
+                context=self.context
+            ).data
+        return None
+
+    def get_unread_count_for_me(self, obj):
+        """Get unread message count for current user."""
+        # This would be implemented with messaging app
+        return 0
+
+
+class RecommendedProfileSerializer(serializers.ModelSerializer):
+    """
+    Enhanced profile serializer with premium features.
+    """
+    user_id = serializers.CharField(source='user.id', read_only=True)
+    display_name = serializers.CharField(source='user.display_name', read_only=True)
+    age = serializers.IntegerField(source='user.age', read_only=True)
+    distance = serializers.SerializerMethodField()
+    has_liked_you = serializers.SerializerMethodField()
+    is_boosted = serializers.SerializerMethodField()
+    premium_user = serializers.SerializerMethodField()
+
+    class Meta:
+        from profiles.models import Profile
+        model = Profile
+        fields = [
+            'user_id', 'display_name', 'age', 'bio', 'photos',
+            'location', 'distance', 'has_liked_you', 'is_boosted',
+            'premium_user', 'interests', 'hiv_status'
+        ]
+
+    def get_distance(self, obj):
+        """Calculate distance between users."""
+        request = self.context.get('request')
+        if request and request.user and hasattr(request.user, 'profile'):
+            user_profile = request.user.profile
+            if user_profile.latitude and user_profile.longitude and obj.latitude and obj.longitude:
+                # Calculate distance using Haversine formula
+                from math import radians, cos, sin, asin, sqrt
+
+                lat1, lon1 = radians(user_profile.latitude), radians(user_profile.longitude)
+                lat2, lon2 = radians(obj.latitude), radians(obj.longitude)
+
+                dlon = lon2 - lon1
+                dlat = lat2 - lat1
+                a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+                c = 2 * asin(sqrt(a))
+                r = 6371  # Radius of earth in kilometers
+
+                return round(c * r, 1)
+        return None
+
+    def get_has_liked_you(self, obj):
+        """Check if this user has liked the current user (Premium only)."""
+        request = self.context.get('request')
+        if request and request.user:
+            # Only show if current user is premium
+            if is_premium_user(request.user):
+                return Like.objects.filter(
+                    user=obj.user,
+                    target_user=request.user
+                ).exists()
+            else:
+                # Non-premium users see None
+                return None
+        return None
+
+    def get_is_boosted(self, obj):
+        """Check if this profile is currently boosted."""
+        from django.utils import timezone
+        return Boost.objects.filter(
+            user=obj.user,
+            is_active=True,
+            expires_at__gt=timezone.now()
+        ).exists()
+
+    def get_premium_user(self, obj):
+        """Check if this user has premium subscription."""
+        return is_premium_user(obj.user)
+
+
+class BoostSerializer(serializers.ModelSerializer):
+    """
+    Serializer for profile boosts.
+    """
+    time_remaining = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Boost
+        fields = ['id', 'is_active', 'created_at', 'expires_at', 'time_remaining']
+        read_only_fields = ['id', 'created_at']
+
+    def get_time_remaining(self, obj):
+        """Get remaining time for the boost in minutes."""
+        if obj.is_active:
+            from django.utils import timezone
+            remaining = (obj.expires_at - timezone.now()).total_seconds() / 60
+            return max(0, int(remaining))
+        return 0
+
+
+class PremiumFeaturesSerializer(serializers.Serializer):
+    """
+    Serializer for user's premium features status.
+    """
+    is_premium = serializers.BooleanField()
+    unlimited_likes = serializers.BooleanField()
+    can_see_likers = serializers.BooleanField()
+    can_rewind = serializers.BooleanField()
+    super_likes_remaining = serializers.IntegerField()
+    boosts_remaining = serializers.IntegerField()
+
+    def to_representation(self, user):
+        """Convert user to premium features representation."""
+        if is_premium_user(user):
+            limits = get_premium_limits(user)
             return {
-                'user_id': str(other_user.id),
-                'display_name': other_user.display_name,
-                'age': other_user.age,
-                'main_photo_url': other_user.profile.photos.filter(
-                    is_main=True
-                ).first().photo_url if other_user.profile.photos.exists() else None,
-                'is_verified': other_user.is_verified,
-                'last_active_display': self._get_last_active_display(other_user)
+                'is_premium': True,
+                'unlimited_likes': limits['limits']['features']['unlimited_likes'],
+                'can_see_likers': limits['limits']['features']['can_see_likers'],
+                'can_rewind': limits['limits']['features']['can_rewind'],
+                'super_likes_remaining': limits['limits']['super_likes']['remaining'],
+                'boosts_remaining': limits['limits']['boosts']['remaining']
+            }
+        else:
+            return {
+                'is_premium': False,
+                'unlimited_likes': False,
+                'can_see_likers': False,
+                'can_rewind': False,
+                'super_likes_remaining': 0,
+                'boosts_remaining': 0
             }
         return None
-    
+
     def get_unread_count_for_me(self, obj):
         """Get unread count for current user."""
         request = self.context.get('request')
         if request and request.user:
             return obj.get_unread_count(request.user)
         return 0
-    
+
     def _get_last_active_display(self, user):
         """Get display-friendly last active time."""
         from django.utils import timezone
         last_active = user.last_active
         now = timezone.now()
         diff = now - last_active
-        
+
         if diff.total_seconds() < 300:  # 5 minutes
             return _("Online")
         elif diff.total_seconds() < 3600:  # 1 hour
@@ -99,11 +224,11 @@ class DiscoveryProfileSerializer(serializers.Serializer):
     is_verified = serializers.BooleanField(source='user.is_verified')
     is_online = serializers.SerializerMethodField()
     distance_km = serializers.SerializerMethodField()
-    
+
     def get_age(self, obj):
         """Get user's age."""
         return obj.user.age
-    
+
     def get_photos(self, obj):
         """Get profile photos."""
         photos = []
@@ -114,12 +239,12 @@ class DiscoveryProfileSerializer(serializers.Serializer):
                 'is_main': photo.is_main
             })
         return photos
-    
+
     def get_is_online(self, obj):
         """Check if user is online."""
         from django.utils import timezone
         return (timezone.now() - obj.user.last_active).total_seconds() < 300
-    
+
     def get_distance_km(self, obj):
         """Get distance from current user."""
         # This would be calculated in the service
@@ -139,7 +264,7 @@ class BoostSerializer(serializers.ModelSerializer):
     """
     is_active = serializers.SerializerMethodField()
     time_remaining_seconds = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Boost
         fields = [
@@ -147,11 +272,11 @@ class BoostSerializer(serializers.ModelSerializer):
             'time_remaining_seconds', 'views_gained', 'likes_gained'
         ]
         read_only_fields = ['id', 'started_at', 'expires_at', 'views_gained', 'likes_gained']
-    
+
     def get_is_active(self, obj):
         """Check if boost is active."""
         return obj.is_active()
-    
+
     def get_time_remaining_seconds(self, obj):
         """Get remaining time in seconds."""
         from django.utils import timezone
@@ -172,11 +297,11 @@ class LikesReceivedSerializer(serializers.Serializer):
     is_verified = serializers.BooleanField(source='from_user.is_verified')
     liked_at = serializers.DateTimeField(source='created_at')
     like_type = serializers.CharField()
-    
+
     def get_age(self, obj):
         """Get user's age."""
         return obj.from_user.age
-    
+
     def get_main_photo_url(self, obj):
         """Get main photo URL."""
         photo = obj.from_user.profile.photos.filter(is_main=True).first()

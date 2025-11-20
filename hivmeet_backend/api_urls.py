@@ -14,6 +14,7 @@ urlpatterns = [
     path('user-profiles/', include('profiles.urls')),
     
     # Discovery and matching endpoints
+    # Discovery: supporte les deux chemins pour compatibilité frontend
     path('discovery/', include('matching.urls.discovery')),
     path('matches/', include('matching.urls.matches')),
     

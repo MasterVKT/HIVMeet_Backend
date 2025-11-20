@@ -258,3 +258,39 @@ class User(AbstractBaseUser, PermissionsMixin):
         """Clear all FCM tokens."""
         self.fcm_tokens = []
         self.save(update_fields=['fcm_tokens'])
+    
+    @property
+    def premium_features(self):
+        """Get available premium features."""
+        from subscriptions.utils import get_premium_limits
+        return get_premium_limits(self)
+    
+    @property
+    def can_send_super_like(self):
+        """Check if user can send super likes."""
+        from subscriptions.utils import check_feature_availability
+        return check_feature_availability(self, 'super_like')['available']
+    
+    @property
+    def can_use_boost(self):
+        """Check if user can use profile boost."""
+        from subscriptions.utils import check_feature_availability
+        return check_feature_availability(self, 'boost')['available']
+    
+    @property
+    def can_send_media_messages(self):
+        """Check if user can send media messages."""
+        from subscriptions.utils import check_feature_availability
+        return check_feature_availability(self, 'media_messaging')['available']
+    
+    @property
+    def can_make_calls(self):
+        """Check if user can make calls."""
+        from subscriptions.utils import check_feature_availability
+        return check_feature_availability(self, 'calls')['available']
+    
+    @property
+    def can_see_who_liked(self):
+        """Check if user can see who liked them."""
+        from subscriptions.utils import is_premium_user
+        return is_premium_user(self)

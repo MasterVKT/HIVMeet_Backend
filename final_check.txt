@@ -1,0 +1,8 @@
+INFO 2025-06-19 13:28:21,847 firebase_service 16116 11104 Firebase Admin SDK initialized successfully
+Traceback (most recent call last):
+  File "D:\Projets\HIVMeet\env\hivmeet_backend\final_premium_check.py", line 11, in <module>
+    print("\u2705 SYSTÈME PREMIUM HIVMEET - VÉRIFICATION FINALE")
+  File "C:\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2705' in position 0: character maps to <undefined>

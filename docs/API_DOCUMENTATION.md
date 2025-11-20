@@ -1,30 +1,24 @@
 # Documentation de l’API HIVMeet
 
-## Authentification & Utilisateurs
-
-### POST `/auth/login`
-- **Description** : Authentifie un utilisateur avec email et mot de passe.
-- **Requête** :
-  ```json
-  {
-    "email": "string",
-    "password": "string"
-  }
-  ```
-- **Réponse** (200) :
-  ```json
-  {
-    "token": "jwt_token",
-    "user": { ...userObject }
-  }
-  ```
-- **Erreurs** :
-  - 401 : Identifiants invalides
+## Table des Matières
+1. Authentification
+2. Profils Utilisateurs
+3. Découverte et Matching
+4. Messagerie
+5. Appels
+6. Ressources et Contenu
+7. Abonnements Premium
+8. Paramètres Utilisateur
+9. Webhooks
+10. Monitoring
+11. Conventions (Auth, Pagination, i18n, Erreurs)
 
 ---
 
-### POST `/auth/register`
-- **Description** : Crée un nouveau compte utilisateur.
+## Authentification
+
+### POST `/api/v1/auth/register`
+- **Description** : Crée un nouveau compte utilisateur
 - **Requête** :
   ```json
   {
@@ -38,7 +32,12 @@
 - **Réponse** (201) :
   ```json
   {
-    "user": { ...userObject },
+    "user": {
+      "id": "uuid",
+      "email": "string",
+      "username": "string",
+      "created_at": "datetime"
+    },
     "token": "jwt_token"
   }
   ```
@@ -47,241 +46,403 @@
 
 ---
 
-### POST `/auth/verification`
-- **Description** : Vérifie le compte utilisateur (email, code SMS, etc.).
+### GET `/api/v1/auth/verify-email/{verification_token}`
+- **Description** : Vérifie l'email d'un utilisateur
+- **Réponse** (200) :
+  ```json
+  { "verified": true, "message": "Email vérifié avec succès" }
+  ```
+
+---
+
+### POST `/api/v1/auth/login`
+- **Description** : Authentifie un utilisateur (email + mot de passe)
 - **Requête** :
   ```json
-  {
-    "userId": "string",
-    "code": "string"
-  }
+  { "email": "string", "password": "string", "remember_me": false }
   ```
 - **Réponse** (200) :
   ```json
   {
-    "verified": true
-  }
-  ```
-- **Erreurs** :
-  - 400 : Code invalide
-
----
-
-## Profils
-
-### GET `/profiles/me`
-- **Description** : Récupère le profil de l’utilisateur connecté.
-- **Réponse** (200) :
-  ```json
-  {
-    "profile": { ...profileObject }
+    "token": "jwt_token",
+    "refresh_token": "refresh_token",
+    "user": { "id": "uuid", "email": "string", "username": "string" }
   }
   ```
 
 ---
 
-### POST `/profiles`
-- **Description** : Crée ou met à jour le profil de l’utilisateur.
+### POST `/api/v1/auth/firebase-exchange/`
+- **Description** : Échange un token Firebase contre des tokens JWT
 - **Requête** :
   ```json
-  {
-    "bio": "string",
-    "gender": "string",
-    "birthdate": "YYYY-MM-DD",
-    "photos": ["url1", "url2", ...],
-    "preferences": { ... }
-  }
+  { "firebase_token": "string" }
   ```
-- **Réponse** (201/200) :
-  ```json
-  {
-    "profile": { ...profileObject }
-  }
-  ```
-
----
-
-### GET `/profiles/:id`
-- **Description** : Récupère le profil d’un utilisateur par son ID.
 - **Réponse** (200) :
   ```json
   {
-    "profile": { ...profileObject }
-  }
-  ```
-- **Erreurs** :
-  - 404 : Profil non trouvé
-
----
-
-## Découverte & Filtres
-
-### GET `/discovery`
-- **Description** : Liste les profils à découvrir selon les préférences de l’utilisateur.
-- **Query params** :
-  - `age_min`, `age_max`, `gender`, `distance_max`, etc.
-- **Réponse** (200) :
-  ```json
-  {
-    "profiles": [{ ...profileObject }, ...]
+    "token": "jwt_token",
+    "refresh_token": "refresh_token",
+    "user": { "id": "uuid", "email": "string", "username": "string" }
   }
   ```
 
 ---
 
-### POST `/discovery/filters`
-- **Description** : Définit ou met à jour les filtres de découverte de l’utilisateur.
+### POST `/api/v1/auth/forgot-password`
+- **Description** : Demande de réinitialisation de mot de passe
+- **Requête** : `{ "email": "string" }`
+- **Réponse** (200) : `{ "message": "Email de réinitialisation envoyé" }`
+
+---
+
+### POST `/api/v1/auth/reset-password`
+- **Description** : Réinitialise le mot de passe
 - **Requête** :
   ```json
-  {
-    "age_min": 18,
-    "age_max": 35,
-    "gender": "string",
-    "distance_max": 50
-  }
+  { "token": "string", "new_password": "string" }
   ```
-- **Réponse** (200) :
-  ```json
-  {
-    "filters": { ... }
-  }
-  ```
+- **Réponse** (200) : `{ "message": "Mot de passe réinitialisé avec succès" }`
 
 ---
 
-## Matchs
-
-### POST `/matches`
-- **Description** : Like ou dislike un profil.
-- **Requête** :
-  ```json
-  {
-    "targetProfileId": "string",
-    "action": "like" | "dislike"
-  }
-  ```
-- **Réponse** (200) :
-  ```json
-  {
-    "match": true | false
-  }
-  ```
+### POST `/api/v1/auth/refresh-token`
+- **Description** : Rafraîchit un token d'accès expiré
+- **Requête** : `{ "refresh_token": "string" }`
+- **Réponse** (200) : `{ "token": "new_jwt_token" }`
 
 ---
 
-### GET `/matches`
-- **Description** : Liste les profils avec lesquels il y a un match.
-- **Réponse** (200) :
-  ```json
-  {
-    "matches": [{ ...profileObject }, ...]
-  }
-  ```
+### POST `/api/v1/auth/logout`
+- **Description** : Déconnecte l'utilisateur (invalide les tokens)
+- **Réponse** (200) : `{ "message": "Déconnexion réussie" }`
+
+---
+
+### POST `/api/v1/auth/fcm-token`
+- **Description** : Enregistre le token FCM pour notifications push
+- **Requête** : `{ "fcm_token": "string" }`
+- **Réponse** (201) : `{ "message": "Token FCM enregistré" }`
+
+---
+
+## Profils Utilisateurs
+
+### GET `/api/v1/user-profiles/me/`
+- **Description** : Récupère le profil de l'utilisateur connecté
+- **Réponse** (200) : Profil complet utilisateur
+
+---
+
+### PUT `/api/v1/user-profiles/me/`
+- **Description** : Met à jour le profil utilisateur
+- **Requête** : bio, birthdate, gender, location, preferences
+- **Réponse** (200) : Profil mis à jour
+
+---
+
+### GET `/api/v1/user-profiles/{user_id}/`
+- **Description** : Récupère le profil d'un autre utilisateur
+
+---
+
+### POST `/api/v1/user-profiles/me/photos/`
+- **Description** : Upload d'une photo de profil (multipart/form-data)
+- **Réponse** (201) : Détails de la photo
+
+---
+
+### PUT `/api/v1/user-profiles/me/photos/{photo_id}/set-main/`
+- **Description** : Définit une photo comme principale
+
+---
+
+### DELETE `/api/v1/user-profiles/me/photos/{photo_id}/`
+- **Description** : Supprime une photo
+- **Réponse** (204)
+
+---
+
+### GET `/api/v1/user-profiles/likes-received/`
+- **Description** : Liste des likes reçus (Premium)
+
+---
+
+### GET `/api/v1/user-profiles/super-likes-received/`
+- **Description** : Liste des super-likes reçus (Premium)
+
+---
+
+### GET `/api/v1/user-profiles/premium-status/`
+- **Description** : Statut des fonctionnalités premium
+
+---
+
+### GET `/api/v1/user-profiles/me/verification/`
+- **Description** : Statut de vérification
+
+---
+
+### POST `/api/v1/user-profiles/me/verification/generate-upload-url/`
+- **Description** : Génère une URL signée d'upload de documents
+
+---
+
+### POST `/api/v1/user-profiles/me/verification/submit-documents/`
+- **Description** : Soumet les documents de vérification
+
+---
+
+## Découverte et Matching
+
+### GET `/api/v1/discovery/`
+- **Description** : Profils recommandés pour découverte
+- **Query** : `page`, `page_size`
+
+---
+
+### GET `/api/v1/discovery/profiles`
+- **Description** : Alias de `/api/v1/discovery/`
+
+---
+
+### POST `/api/v1/discovery/interactions/like`
+- **Description** : Like un profil
+- **Requête** : `{ "target_user_id": "uuid" }`
+
+---
+
+### POST `/api/v1/discovery/interactions/dislike`
+- **Description** : Dislike un profil
+
+---
+
+### POST `/api/v1/discovery/interactions/superlike`
+- **Description** : Super-like (Premium)
+
+---
+
+### POST `/api/v1/discovery/interactions/rewind`
+- **Description** : Annule le dernier swipe (Premium)
+
+---
+
+### GET `/api/v1/discovery/interactions/liked-me`
+- **Description** : Voir qui m'a liké (Premium)
+
+---
+
+### POST `/api/v1/discovery/boost/activate`
+- **Description** : Active un boost de profil (Premium)
+
+---
+
+### GET `/api/v1/matches/`
+- **Description** : Liste des matches
+
+---
+
+### DELETE `/api/v1/matches/{match_id}`
+- **Description** : Supprime (unmatch) un match
 
 ---
 
 ## Messagerie
 
-### GET `/conversations`
-- **Description** : Liste les conversations de l’utilisateur.
-- **Réponse** (200) :
-  ```json
-  {
-    "conversations": [
-      {
-        "id": "string",
-        "participants": [{ ...userObject }],
-        "lastMessage": { ...messageObject }
-      }
-    ]
-  }
-  ```
+### GET `/api/v1/conversations/`
+- **Description** : Liste des conversations
 
 ---
 
-### GET `/conversations/:id/messages`
-- **Description** : Récupère les messages d’une conversation.
-- **Réponse** (200) :
-  ```json
-  {
-    "messages": [{ ...messageObject }, ...]
-  }
-  ```
+### GET `/api/v1/conversations/{conversation_id}/messages/`
+- **Description** : Messages d'une conversation
 
 ---
 
-### POST `/conversations/:id/messages`
-- **Description** : Envoie un message dans une conversation.
-- **Requête** :
-  ```json
-  {
-    "content": "string"
-  }
-  ```
-- **Réponse** (201) :
-  ```json
-  {
-    "message": { ...messageObject }
-  }
-  ```
+### POST `/api/v1/conversations/{conversation_id}/messages/`
+- **Description** : Envoi d'un message
 
 ---
 
-## Objets de données
+### POST `/api/v1/conversations/{conversation_id}/messages/media/`
+- **Description** : Envoi d'un média (Premium)
 
-### userObject
-```json
-{
-  "id": "string",
-  "email": "string",
-  "username": "string",
-  "createdAt": "datetime"
-}
+---
+
+### PUT `/api/v1/conversations/{conversation_id}/messages/mark-as-read/`
+- **Description** : Marque comme lus
+
+---
+
+### DELETE `/api/v1/conversations/{conversation_id}/messages/{message_id}/`
+- **Description** : Supprime un message (soft-delete)
+
+---
+
+## Appels
+
+### POST `/api/v1/calls/initiate`
+- **Description** : Initie un appel
+
+---
+
+### POST `/api/v1/calls/{call_id}/answer`
+- **Description** : Répond à un appel
+
+---
+
+### POST `/api/v1/calls/{call_id}/ice-candidate`
+- **Description** : Ajoute un candidat ICE
+
+---
+
+### POST `/api/v1/calls/{call_id}/terminate`
+- **Description** : Termine un appel
+
+---
+
+### POST `/api/v1/conversations/calls/initiate-premium/`
+- **Description** : Initie un appel premium (Premium)
+
+Note: L'URL premium d'appel est exposée sous le préfixe `conversations/` dans ce backend.
+
+---
+
+## Ressources et Contenu
+
+### GET `/api/v1/content/resource-categories`
+- **Description** : Liste des catégories
+
+---
+
+### GET `/api/v1/content/resources`
+- **Description** : Liste des ressources
+
+---
+
+### GET `/api/v1/content/resources/{resource_id}`
+- **Description** : Détails d'une ressource
+
+---
+
+### POST `/api/v1/content/resources/{resource_id}/favorite`
+- **Description** : Ajoute/retire des favoris
+
+---
+
+### GET `/api/v1/content/favorites`
+- **Description** : Liste des favoris
+
+---
+
+### POST `/api/v1/feed/posts`
+- **Description** : Crée un post de feed
+
+---
+
+### GET `/api/v1/feed/posts`
+- **Description** : Liste les posts du feed
+
+---
+
+### POST `/api/v1/feed/posts/{post_id}/like`
+- **Description** : Like/unlike un post
+
+---
+
+### POST `/api/v1/feed/posts/{post_id}/comments`
+- **Description** : Ajoute un commentaire
+
+---
+
+### GET `/api/v1/feed/posts/{post_id}/comments`
+- **Description** : Liste des commentaires
+
+---
+
+## Abonnements Premium
+
+### GET `/api/v1/subscriptions/plans/`
+- **Description** : Liste des plans
+
+---
+
+### GET `/api/v1/subscriptions/current/`
+- **Description** : Abonnement actuel
+
+---
+
+### POST `/api/v1/subscriptions/purchase/`
+- **Description** : Achète un abonnement
+
+---
+
+### POST `/api/v1/subscriptions/current/cancel/`
+- **Description** : Annule l'abonnement courant
+
+---
+
+### POST `/api/v1/subscriptions/current/reactivate/`
+- **Description** : Réactive l'abonnement
+
+---
+
+## Paramètres Utilisateur
+
+### GET `/api/v1/user-settings/notification-preferences`
+### PUT `/api/v1/user-settings/notification-preferences`
+
+### GET `/api/v1/user-settings/privacy-preferences`
+### PUT `/api/v1/user-settings/privacy-preferences`
+
+### GET `/api/v1/user-settings/blocks`
+### POST `/api/v1/user-settings/blocks/{user_id}`
+
+### POST `/api/v1/user-settings/delete-account`
+
+### GET `/api/v1/user-settings/export-data`
+
+---
+
+## Webhooks
+
+### POST `/api/v1/webhooks/payments/mycoolpay/`
+- **Description** : Webhook MyCoolPay
+
+---
+
+## Monitoring
+
+### GET `/health/`
+### GET `/health/simple/`
+### GET `/health/ready/`
+### GET `/metrics/`
+
+---
+
+## Conventions
+
+### Authentification
+- Header requis (sauf `/api/v1/auth/*`) :
+```
+Authorization: Bearer <jwt_token>
 ```
 
-### profileObject
+### Pagination
+- Paramètres: `page`, `page_size`
+- Réponse paginée:
 ```json
-{
-  "id": "string",
-  "userId": "string",
-  "bio": "string",
-  "gender": "string",
-  "birthdate": "YYYY-MM-DD",
-  "photos": ["url1", "url2", ...],
-  "preferences": { ... }
-}
+{ "count": 100, "next": "?page=2", "previous": null, "results": [ ... ] }
 ```
 
-### messageObject
+### Internationalisation
+- Header supporté: `Accept-Language: fr` ou `en`
+
+### Erreurs (format commun)
 ```json
-{
-  "id": "string",
-  "senderId": "string",
-  "content": "string",
-  "sentAt": "datetime"
-}
+{ "error": true, "message": "Description", "details": { } }
 ```
 
 ---
 
-## Sécurité & Authentification
-
-- Toutes les routes (sauf `/auth/*`) nécessitent un header `Authorization: Bearer <token>`.
-- Les réponses d’erreur doivent être structurées :
-  ```json
-  {
-    "error": "message"
-  }
-  ```
-
----
-
-## Autres recommandations
-
-- Les dates doivent être au format ISO 8601.
-- Les listes paginées peuvent utiliser les query params `page` et `limit`.
-- Les endpoints doivent retourner des statuts HTTP appropriés (200, 201, 400, 401, 404, etc.).
-
----
-
-Cette documentation peut être enrichie selon les besoins spécifiques du frontend ou de nouvelles fonctionnalités.
+Dernière mise à jour: 2025-09-14 — Version API: v1

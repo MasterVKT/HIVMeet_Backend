@@ -31,19 +31,20 @@ class FirebaseService:
         Initialize Firebase Admin SDK.
         """
         try:
-            # Check if credentials path is configured
-            if not settings.FIREBASE_CREDENTIALS_PATH:
-                raise ValueError("FIREBASE_CREDENTIALS_PATH not configured in settings")
-            
-            # Check if credentials file exists
-            if not os.path.exists(settings.FIREBASE_CREDENTIALS_PATH):
-                raise FileNotFoundError(f"Firebase credentials file not found at {settings.FIREBASE_CREDENTIALS_PATH}")
-            
-            # Initialize Firebase Admin SDK
-            cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
-            firebase_admin.initialize_app(cred, {
-                'storageBucket': settings.FIREBASE_STORAGE_BUCKET
-            })
+            if not firebase_admin._apps:
+                # Check if credentials path is configured
+                if not settings.FIREBASE_CREDENTIALS_PATH:
+                    raise ValueError("FIREBASE_CREDENTIALS_PATH not configured in settings")
+                
+                # Check if credentials file exists
+                if not os.path.exists(settings.FIREBASE_CREDENTIALS_PATH):
+                    raise FileNotFoundError(f"Firebase credentials file not found at {settings.FIREBASE_CREDENTIALS_PATH}")
+                
+                # Initialize Firebase Admin SDK
+                cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+                firebase_admin.initialize_app(cred, {
+                    'storageBucket': settings.FIREBASE_STORAGE_BUCKET
+                })
             
             # Initialize services
             self._auth = auth
