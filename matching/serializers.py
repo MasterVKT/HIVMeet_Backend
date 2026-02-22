@@ -4,8 +4,9 @@ Serializers for matching app with premium features integration.
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
+from django.db.models import Q
 
-from .models import Like, Match, Boost
+from .models import Like, Match, Boost, InteractionHistory
 from profiles.serializers import PublicProfileSerializer
 from subscriptions.utils import is_premium_user, get_premium_limits
 
@@ -213,7 +214,7 @@ class DiscoveryProfileSerializer(serializers.Serializer):
     Serializer for profiles in discovery.
     """
     user_id = serializers.UUIDField(source='user.id')
-    display_name = serializers.CharField(source='user.display_name')
+    display_name = serializers.SerializerMethodField()
     age = serializers.SerializerMethodField()
     bio = serializers.CharField()
     city = serializers.CharField()
@@ -225,19 +226,76 @@ class DiscoveryProfileSerializer(serializers.Serializer):
     is_online = serializers.SerializerMethodField()
     distance_km = serializers.SerializerMethodField()
 
+    def get_display_name(self, obj):
+        """
+        Construct a readable display name from user data.
+        Fallback chain: display_name -> first_name -> email prefix
+        """
+        user = obj.user
+        
+        # Priority 1: Use the display_name field if not empty
+        if user.display_name and user.display_name.strip():
+            return user.display_name.strip()
+        
+        # Fallback: Use email prefix (before @)
+        return user.email.split('@')[0]
+
     def get_age(self, obj):
         """Get user's age."""
         return obj.user.age
 
     def get_photos(self, obj):
-        """Get profile photos."""
+        """
+        Get profile photo URLs or return a default avatar.
+        Returns a list of photo URLs (strings, not objects).
+        Handles both absolute URLs and relative paths, converting them to absolute URLs.
+        """
+        from django.conf import settings
+        from rest_framework.request import Request
+        
         photos = []
-        for photo in obj.photos.filter(is_approved=True).order_by('order'):
-            photos.append({
-                'url': photo.photo_url,
-                'thumbnail_url': photo.thumbnail_url,
-                'is_main': photo.is_main
-            })
+        
+        # Get approved photos, ordered by priority
+        approved_photos = obj.photos.filter(is_approved=True).order_by('order')
+        
+        if approved_photos.exists():
+            # Return main photo URLs
+            for photo in approved_photos:
+                if photo.photo_url:
+                    url = photo.photo_url.strip()
+                    
+                    # Check if it's already an absolute URL
+                    if url.startswith('http://') or url.startswith('https://'):
+                        photos.append(url)
+                    else:
+                        # Convert relative path to absolute URL using request context
+                        request = self.context.get('request')
+                        if request:
+                            # Build absolute URL using request
+                            if url.startswith('/'):
+                                # Already has leading slash
+                                absolute_url = request.build_absolute_uri(url)
+                            else:
+                                # Add /media/ prefix if not present
+                                media_path = f"/media/{url}" if not url.startswith('media/') else f"/{url}"
+                                absolute_url = request.build_absolute_uri(media_path)
+                            photos.append(absolute_url)
+                        else:
+                            # Fallback without request context
+                            if url.startswith('/'):
+                                photos.append(url)
+                            else:
+                                photos.append(f"/media/{url}" if not url.startswith('media/') else f"/{url}")
+        
+        # If no photos, use Gravatar as default avatar
+        if not photos:
+            import hashlib
+            user = obj.user
+            # Create a Gravatar URL using email hash
+            email_hash = hashlib.md5(user.email.lower().encode()).hexdigest()
+            gravatar_url = f"https://www.gravatar.com/avatar/{email_hash}?d=identicon&s=400"
+            photos.append(gravatar_url)
+        
         return photos
 
     def get_is_online(self, obj):
@@ -306,3 +364,169 @@ class LikesReceivedSerializer(serializers.Serializer):
         """Get main photo URL."""
         photo = obj.from_user.profile.photos.filter(is_main=True).first()
         return photo.thumbnail_url if photo else None
+
+
+class SearchFilterSerializer(serializers.Serializer):
+    """
+    Serializer for discovery search filters.
+    """
+    age_min = serializers.IntegerField(
+        min_value=18,
+        max_value=99,
+        required=False
+    )
+    age_max = serializers.IntegerField(
+        min_value=18,
+        max_value=99,
+        required=False
+    )
+    distance_max_km = serializers.IntegerField(
+        min_value=5,
+        max_value=100,
+        required=False
+    )
+    genders = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        allow_empty=True
+    )
+    relationship_types = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        allow_empty=True
+    )
+    verified_only = serializers.BooleanField(
+        required=False,
+        default=False
+    )
+    online_only = serializers.BooleanField(
+        required=False,
+        default=False
+    )
+
+    def validate(self, data):
+        """Validate filter data."""
+        # Validate age range
+        if 'age_min' in data and 'age_max' in data:
+            if data['age_min'] > data['age_max']:
+                raise serializers.ValidationError({
+                    'age_min': _('Minimum age must be less than or equal to maximum age.')
+                })
+        
+        return data
+
+    def update_profile_filters(self, profile):
+        """Update profile with validated filter data."""
+        if 'age_min' in self.validated_data:
+            profile.age_min_preference = self.validated_data['age_min']
+        
+        if 'age_max' in self.validated_data:
+            profile.age_max_preference = self.validated_data['age_max']
+        
+        if 'distance_max_km' in self.validated_data:
+            profile.distance_max_km = self.validated_data['distance_max_km']
+        
+        if 'genders' in self.validated_data:
+            genders = self.validated_data['genders']
+            # Handle "all" case - store empty list
+            if 'all' in genders or not genders:
+                profile.genders_sought = []
+            else:
+                profile.genders_sought = genders
+        
+        if 'relationship_types' in self.validated_data:
+            rel_types = self.validated_data['relationship_types']
+            # Handle "all" case - store empty list
+            if 'all' in rel_types or not rel_types:
+                profile.relationship_types_sought = []
+            else:
+                profile.relationship_types_sought = rel_types
+        
+        if 'verified_only' in self.validated_data:
+            profile.verified_only = self.validated_data['verified_only']
+        
+        if 'online_only' in self.validated_data:
+            profile.online_only = self.validated_data['online_only']
+        
+        profile.save()
+        return profile
+
+
+class InteractionHistorySerializer(serializers.Serializer):
+    """
+    Serializer for interaction history entries.
+    """
+    id = serializers.UUIDField(read_only=True)
+    profile = serializers.SerializerMethodField()
+    interaction_type = serializers.CharField(read_only=True)
+    liked_at = serializers.DateTimeField(source='created_at', read_only=True)
+    passed_at = serializers.DateTimeField(source='created_at', read_only=True)
+    is_matched = serializers.SerializerMethodField()
+    match_id = serializers.SerializerMethodField()
+    can_rematch = serializers.SerializerMethodField()
+    can_reconsider = serializers.SerializerMethodField()
+    
+    def get_profile(self, obj):
+        """Get the target user's profile."""
+        # Use the DiscoveryProfileSerializer from this same file
+        request = self.context.get('request')
+        return DiscoveryProfileSerializer(
+            obj.target_user.profile,
+            context={'request': request}
+        ).data
+    
+    def get_is_matched(self, obj):
+        """Check if this interaction led to a match."""
+        if obj.interaction_type == InteractionHistory.DISLIKE:
+            return False
+        
+        request = self.context.get('request')
+        if request and request.user:
+            match = Match.objects.filter(
+                Q(user1=request.user, user2=obj.target_user) |
+                Q(user1=obj.target_user, user2=request.user),
+                status=Match.ACTIVE
+            ).first()
+            return bool(match)
+        return False
+    
+    def get_match_id(self, obj):
+        """Get match ID if exists."""
+        if obj.interaction_type == InteractionHistory.DISLIKE:
+            return None
+        
+        request = self.context.get('request')
+        if request and request.user:
+            match = Match.objects.filter(
+                Q(user1=request.user, user2=obj.target_user) |
+                Q(user1=obj.target_user, user2=request.user),
+                status=Match.ACTIVE
+            ).first()
+            return str(match.id) if match else None
+        return None
+    
+    def get_can_rematch(self, obj):
+        """Check if user can rematch (for likes)."""
+        if obj.interaction_type == InteractionHistory.DISLIKE:
+            return False
+        
+        is_matched = self.get_is_matched(obj)
+        return not is_matched and not obj.is_revoked
+    
+    def get_can_reconsider(self, obj):
+        """Check if user can reconsider (for dislikes)."""
+        return not obj.is_revoked
+
+
+class InteractionStatsSerializer(serializers.Serializer):
+    """
+    Serializer for interaction statistics.
+    """
+    total_likes = serializers.IntegerField()
+    total_super_likes = serializers.IntegerField()
+    total_dislikes = serializers.IntegerField()
+    total_matches = serializers.IntegerField()
+    like_to_match_ratio = serializers.FloatField()
+    total_interactions_today = serializers.IntegerField()
+    daily_limit = serializers.IntegerField()
+    remaining_today = serializers.IntegerField()

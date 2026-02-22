@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from authentication.models import User as UserType
 
 from profiles.models import Profile
-from .models import Like, Dislike, Match, ProfileView, Boost, DailyLikeLimit
+from .models import Like, Dislike, Match, ProfileView, Boost, DailyLikeLimit, InteractionHistory
 
 logger = logging.getLogger('hivmeet.matching')
 User = get_user_model()
@@ -42,9 +42,13 @@ class RecommendationService:
         # Earth's radius in kilometers
         earth_radius = 6371.0
         
+        # Convert Decimal to float for calculations
+        user_lat = float(user_profile.latitude)
+        user_lon = float(user_profile.longitude)
+        
         # Convert to radians
-        lat_rad = math.radians(float(user_profile.latitude))
-        lon_rad = math.radians(float(user_profile.longitude))
+        lat_rad = math.radians(user_lat)
+        lon_rad = math.radians(user_lon)
         
         # Rough bounding box to limit initial query
         # 1 degree of latitude is approximately 111 km
@@ -54,10 +58,10 @@ class RecommendationService:
         
         # Create bounding box filter
         bbox_filter = Q(
-            latitude__gte=user_profile.latitude - lat_diff,
-            latitude__lte=user_profile.latitude + lat_diff,
-            longitude__gte=user_profile.longitude - lon_diff,
-            longitude__lte=user_profile.longitude + lon_diff
+            latitude__gte=user_lat - lat_diff,
+            latitude__lte=user_lat + lat_diff,
+            longitude__gte=user_lon - lon_diff,
+            longitude__lte=user_lon + lon_diff
         )
         
         return bbox_filter
@@ -76,19 +80,39 @@ class RecommendationService:
         """
         Get profile recommendations for a user.
         """
+        # LOG 1: Début
+        logger.info(f"🔍 get_recommendations - User: {user.email}, limit: {limit}, offset: {offset}")
+        
         if not hasattr(user, 'profile'):
+            logger.warning(f"⚠️  User {user.email} has no profile")
             return []
         
         user_profile = user.profile
         
-        # Get IDs of users already interacted with
-        liked_user_ids = Like.objects.filter(
+        # Get IDs of users with active (non-revoked) interactions from InteractionHistory
+        interacted_user_ids = InteractionHistory.objects.filter(
+            user=user,
+            is_revoked=False
+        ).values_list('target_user_id', flat=True)
+        
+        # Also get legacy data (backwards compatibility)
+        # Only exclude legacy likes/dislikes that haven't been revoked in InteractionHistory
+        revoked_user_ids = InteractionHistory.objects.filter(
+            user=user,
+            is_revoked=True
+        ).values_list('target_user_id', flat=True)
+        
+        legacy_liked_ids = Like.objects.filter(
             from_user=user
+        ).exclude(
+            to_user_id__in=revoked_user_ids
         ).values_list('to_user_id', flat=True)
         
-        disliked_user_ids = Dislike.objects.filter(
+        legacy_disliked_ids = Dislike.objects.filter(
             from_user=user,
             expires_at__gt=timezone.now()
+        ).exclude(
+            to_user_id__in=revoked_user_ids
         ).values_list('to_user_id', flat=True)
         
         blocked_user_ids = user.blocked_users.values_list('id', flat=True)
@@ -97,8 +121,16 @@ class RecommendationService:
         ).values_list('id', flat=True)
         
         # Combine all excluded user IDs
-        excluded_ids = set(liked_user_ids) | set(disliked_user_ids) | \
+        excluded_ids = set(interacted_user_ids) | set(legacy_liked_ids) | set(legacy_disliked_ids) | \
                       set(blocked_user_ids) | set(blocked_by_ids) | {user.id}
+        
+        # LOG 2: Profils exclus
+        logger.info(f"🚫 Excluding {len(excluded_ids)} profiles:")
+        logger.info(f"   - Active interactions (is_revoked=False): {len(interacted_user_ids)}")
+        logger.info(f"   - Legacy likes: {len(legacy_liked_ids)}")
+        logger.info(f"   - Legacy dislikes: {len(legacy_disliked_ids)}")
+        logger.info(f"   - Blocked users: {len(blocked_user_ids)}")
+        logger.info(f"   - Blocked by: {len(blocked_by_ids)}")
         
         # Base query
         query = Profile.objects.select_related('user').prefetch_related('photos').filter(
@@ -110,6 +142,10 @@ class RecommendationService:
             user_id__in=excluded_ids
         )
         
+        # LOG 3: Après filtres de base
+        count_after_base = query.count()
+        logger.info(f"📊 After base filters (active, email_verified, not hidden, discovery enabled): {count_after_base} profiles")
+        
         # Apply age preferences (mutual)
         user_age = user.age
         if user_age:
@@ -117,6 +153,7 @@ class RecommendationService:
                 age_min_preference__lte=user_age,
                 age_max_preference__gte=user_age
             )
+            logger.info(f"   After mutual age compatibility (target accepts {user_age}y): {query.count()} profiles")
         
         # Apply user's age preferences
         query = query.annotate(
@@ -125,29 +162,51 @@ class RecommendationService:
             user_age__gte=user_profile.age_min_preference,
             user_age__lte=user_profile.age_max_preference
         )
+        logger.info(f"   After user's age filter ({user_profile.age_min_preference}-{user_profile.age_max_preference}): {query.count()} profiles")
         
         # Apply gender preferences (mutual)
+        # If genders_sought is empty list, it means "all" - no filter applied
         if user_profile.genders_sought:
             query = query.filter(gender__in=user_profile.genders_sought)
+            logger.info(f"   After user's gender filter (seeking {user_profile.genders_sought}): {query.count()} profiles")
         
+        # Apply mutual gender compatibility (target profile seeks user's gender)
+        # Accept if: genders_sought is empty ([]), is NULL, or contains user's gender
         if user_profile.gender and user_profile.gender != 'prefer_not_to_say':
             query = query.filter(
-                Q(genders_sought__contains=[user_profile.gender]) |
-                Q(genders_sought=[])
+                Q(genders_sought__contains=[user_profile.gender]) |  # Contains user's gender
+                Q(genders_sought=[]) |  # Empty list means "all"
+                Q(genders_sought__isnull=True)  # NULL means no preference set (accept all)
             )
+            logger.info(f"   After mutual gender compatibility (target seeks {user_profile.gender} OR all): {query.count()} profiles")
         
         # Apply relationship type preferences
+        # If relationship_types_sought is empty list, it means "all" - no filter applied
         if user_profile.relationship_types_sought:
             # Find profiles with overlapping relationship preferences
-            relationship_filter = Q()
+            # Also accept profiles with [] (meaning "all types")
+            relationship_filter = Q(relationship_types_sought=[])
             for rel_type in user_profile.relationship_types_sought:
                 relationship_filter |= Q(relationship_types_sought__contains=[rel_type])
             query = query.filter(relationship_filter)
+            logger.info(f"   After relationship type filter ({user_profile.relationship_types_sought}): {query.count()} profiles")
         
         # Apply distance filter
         distance_filter = RecommendationService.get_distance_filter(user_profile)
         if distance_filter:
             query = query.filter(distance_filter)
+            logger.info(f"   After distance filter (max {user_profile.distance_max_km}km): {query.count()} profiles")
+        
+        # Apply "verified only" filter
+        if user_profile.verified_only:
+            query = query.filter(user__is_verified=True)
+            logger.info(f"   After verified_only filter: {query.count()} profiles ⚠️")
+        
+        # Apply "online only" filter (last active within 5 minutes)
+        if user_profile.online_only:
+            cutoff_time = timezone.now() - timedelta(minutes=5)
+            query = query.filter(user__last_active__gte=cutoff_time)
+            logger.info(f"   After online_only filter (last 5 min): {query.count()} profiles ⚠️")
         
         # Apply boost priority
         active_boosts = Boost.objects.filter(
@@ -181,8 +240,16 @@ class RecommendationService:
             '-profile_completeness'
         ).distinct()
         
+        # LOG 4: Avant pagination
+        logger.info(f"📊 Total profiles after all filters: {query.count()}")
+        
         # Apply pagination
         profiles = query[offset:offset + limit]
+        
+        # LOG 5: Résultat final
+        logger.info(f"✅ Final result after pagination [{offset}:{offset+limit}]: {len(profiles)} profiles")
+        if len(profiles) == 0 and query.count() > 0:
+            logger.warning(f"⚠️  Pagination returned 0 profiles but {query.count()} are available (offset issue?)")
         
         # Log profile view events
         for profile in profiles:
@@ -321,6 +388,14 @@ class MatchingService:
             like_type=Like.SUPER if is_super_like else Like.REGULAR
         )
         
+        # Record in interaction history
+        interaction_type = InteractionHistory.SUPER_LIKE if is_super_like else InteractionHistory.LIKE
+        InteractionHistory.create_or_reactivate(
+            user=from_user,
+            target_user=to_user,
+            interaction_type=interaction_type
+        )
+        
         # Check for mutual like (match)
         mutual_like = Like.objects.filter(
             from_user=to_user,
@@ -347,7 +422,8 @@ class MatchingService:
                 # TODO: Send match notifications
                 
             return True, True, None
-          # Update likes received count
+        
+        # Update likes received count
         if hasattr(to_user, 'profile'):
             to_user.profile.likes_received += 1
             to_user.profile.save(update_fields=['likes_received'])
@@ -369,10 +445,18 @@ class MatchingService:
         
         if existing:
             return False, _("Already passed on this profile.")
-          # Create dislike
+        
+        # Create dislike
         Dislike.objects.create(
             from_user=from_user,
             to_user=to_user
+        )
+        
+        # Record in interaction history
+        InteractionHistory.create_or_reactivate(
+            user=from_user,
+            target_user=to_user,
+            interaction_type=InteractionHistory.DISLIKE
         )
         
         return True, None
@@ -458,3 +542,52 @@ class MatchingService:
         limit.save()
         
         return True, profile_data, None
+    
+    @staticmethod
+    def get_daily_like_limit(user: 'UserType') -> dict:
+        """
+        Get user's daily like limit information.
+        Returns a dict with remaining_likes and total_likes.
+        """
+        today = date.today()
+        limit, created = DailyLikeLimit.objects.get_or_create(
+            user=user,
+            date=today
+        )
+        
+        # Determine total likes based on user status
+        # IMPORTANT: is_premium doit être vérifié avec hasattr pour éviter les erreurs
+        is_premium = getattr(user, 'is_premium', False)
+        is_verified = getattr(user, 'is_verified', False)
+        
+        if is_premium:
+            # Premium users have unlimited likes
+            total_likes = 999  # Display 999 for unlimited
+            remaining_likes = 999
+        elif is_verified:
+            total_likes = 30
+            remaining_likes = max(0, total_likes - limit.likes_count)
+        else:
+            total_likes = 20
+            remaining_likes = max(0, total_likes - limit.likes_count)
+        
+        return {
+            'remaining_likes': remaining_likes,
+            'total_likes': total_likes,
+            'likes_used': limit.likes_count
+        }
+    
+    @staticmethod
+    def get_super_likes_remaining(user: 'UserType') -> int:
+        """
+        Get user's remaining super likes for today.
+        Returns the number of super likes remaining.
+        """
+        today = date.today()
+        limit, created = DailyLikeLimit.objects.get_or_create(
+            user=user,
+            date=today
+        )
+        
+        total_super_likes = 3
+        return max(0, total_super_likes - limit.super_likes_count)

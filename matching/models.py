@@ -425,3 +425,195 @@ class DailyLikeLimit(models.Model):
     def has_rewinds_remaining(self):
         """Check if user has rewinds remaining."""
         return self.rewinds_count < 3
+
+
+class InteractionHistory(models.Model):
+    """
+    Model for tracking complete history of user interactions (likes and dislikes).
+    Allows users to review their past interactions and revoke them if needed.
+    """
+    
+    # Interaction types
+    LIKE = 'like'
+    SUPER_LIKE = 'super_like'
+    DISLIKE = 'dislike'
+    
+    INTERACTION_TYPE_CHOICES = [
+        (LIKE, _('Like')),
+        (SUPER_LIKE, _('Super like')),
+        (DISLIKE, _('Dislike/Pass')),
+    ]
+    
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+    
+    # Who performed the interaction
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='interactions_sent',
+        verbose_name=_('User')
+    )
+    
+    # Target of the interaction
+    target_user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='interactions_received',
+        verbose_name=_('Target user')
+    )
+    
+    # Type of interaction
+    interaction_type = models.CharField(
+        max_length=20,
+        choices=INTERACTION_TYPE_CHOICES,
+        verbose_name=_('Interaction type')
+    )
+    
+    # Revocation status
+    is_revoked = models.BooleanField(
+        default=False,
+        verbose_name=_('Is revoked'),
+        help_text=_('Whether this interaction has been cancelled by the user')
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name=_('Created at')
+    )
+    
+    revoked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_('Revoked at')
+    )
+    
+    class Meta:
+        verbose_name = _('Interaction History')
+        verbose_name_plural = _('Interaction Histories')
+        db_table = 'interaction_history'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['target_user', '-created_at']),
+            models.Index(fields=['interaction_type']),
+            models.Index(fields=['user', 'is_revoked'], name='idx_ih_user_revoked'),
+            models.Index(fields=['user', 'interaction_type', 'is_revoked'], name='idx_ih_user_type_revoked'),
+        ]
+        # Ensure unique active interaction per user-target-type combination
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'target_user', 'interaction_type'],
+                condition=Q(is_revoked=False),
+                name='unique_active_interaction'
+            )
+        ]
+    
+    def __str__(self):
+        status = "revoked" if self.is_revoked else "active"
+        return f"{self.user.display_name} {self.interaction_type} {self.target_user.display_name} ({status})"
+    
+    def revoke(self):
+        """Revoke this interaction."""
+        if not self.is_revoked:
+            self.is_revoked = True
+            self.revoked_at = timezone.now()
+            self.save(update_fields=['is_revoked', 'revoked_at'])
+    
+    @classmethod
+    def get_user_likes(cls, user, include_revoked=False):
+        """Get all likes sent by a user."""
+        queryset = cls.objects.filter(
+            user=user,
+            interaction_type__in=[cls.LIKE, cls.SUPER_LIKE]
+        )
+        if not include_revoked:
+            queryset = queryset.filter(is_revoked=False)
+        return queryset.select_related('target_user__profile').prefetch_related('target_user__profile__photos')
+    
+    @classmethod
+    def get_user_passes(cls, user, include_revoked=False):
+        """Get all dislikes/passes sent by a user."""
+        queryset = cls.objects.filter(
+            user=user,
+            interaction_type=cls.DISLIKE
+        )
+        if not include_revoked:
+            queryset = queryset.filter(is_revoked=False)
+        return queryset.select_related('target_user__profile').prefetch_related('target_user__profile__photos')
+    
+    @classmethod
+    def get_active_interaction(cls, user, target_user):
+        """Get active interaction between two users."""
+        return cls.objects.filter(
+            user=user,
+            target_user=target_user,
+            is_revoked=False
+        ).first()
+    
+    @classmethod
+    def create_or_reactivate(cls, user, target_user, interaction_type):
+        """
+        Create a new interaction or reactivate a revoked one.
+        Returns (interaction, created) tuple.
+        
+        IMPORTANT: Handles the case where an active interaction already exists
+        to avoid violating the unique constraint.
+        """
+        from django.db import IntegrityError
+        
+        try:
+            # Check if an ACTIVE interaction already exists
+            existing_active = cls.objects.filter(
+                user=user,
+                target_user=target_user,
+                interaction_type=interaction_type,
+                is_revoked=False
+            ).first()
+            
+            if existing_active:
+                # Update the existing active interaction instead of creating a new one
+                existing_active.created_at = timezone.now()
+                existing_active.save(update_fields=['created_at'])
+                return existing_active, False
+            
+            # Check for existing revoked interaction
+            existing_revoked = cls.objects.filter(
+                user=user,
+                target_user=target_user,
+                interaction_type=interaction_type,
+                is_revoked=True
+            ).first()
+            
+            if existing_revoked:
+                # Reactivate existing interaction
+                existing_revoked.is_revoked = False
+                existing_revoked.created_at = timezone.now()
+                existing_revoked.revoked_at = None
+                existing_revoked.save()
+                return existing_revoked, False
+            
+            # Create new interaction
+            interaction = cls.objects.create(
+                user=user,
+                target_user=target_user,
+                interaction_type=interaction_type
+            )
+            return interaction, True
+            
+        except IntegrityError:
+            # In case of race condition, get the existing active interaction
+            existing = cls.objects.get(
+                user=user,
+                target_user=target_user,
+                interaction_type=interaction_type,
+                is_revoked=False
+            )
+            # Update the timestamp
+            existing.created_at = timezone.now()
+            existing.save(update_fields=['created_at'])
+            return existing, False

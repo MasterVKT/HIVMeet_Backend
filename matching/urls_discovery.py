@@ -10,6 +10,10 @@ urlpatterns = [
     # Discovery profiles
     path('profiles', views_discovery.get_discovery_profiles, name='profiles'),
     
+    # Filters
+    path('filters', views_discovery.update_discovery_filters, name='update-filters'),
+    path('filters/get', views_discovery.get_discovery_filters, name='get-filters'),
+    
     # Interactions
     path('interactions/like', views_discovery.like_profile, name='like'),
     path('interactions/dislike', views_discovery.dislike_profile, name='dislike'),

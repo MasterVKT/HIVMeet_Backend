@@ -50,6 +50,11 @@ class ConversationListView(generics.ListAPIView):
         """Get conversations for current user."""
         user = self.request.user
         
+        # Debug logging
+        logger.info(f"🔍 Conversations request - User: {user}")
+        logger.info(f"🔍 Is authenticated: {user.is_authenticated}")
+        logger.info(f"🔍 Auth header: {self.request.META.get('HTTP_AUTHORIZATION', 'NO AUTH HEADER')}")
+        
         # Get all active matches with messages
         queryset = Match.objects.filter(
             Q(user1=user) | Q(user2=user),

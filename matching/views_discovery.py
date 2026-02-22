@@ -16,7 +16,8 @@ from .serializers import (
     DiscoveryProfileSerializer,
     LikeActionSerializer,
     BoostSerializer,
-    LikesReceivedSerializer
+    LikesReceivedSerializer,
+    SearchFilterSerializer
 )
 from .models import Like, Boost
 
@@ -38,6 +39,19 @@ def get_discovery_profiles(request):
     
     GET /api/v1/discovery/profiles
     """
+    user = request.user
+    
+    # LOG 1: Utilisateur
+    logger.info(f"🔍 Discovery request - User: {user.display_name if hasattr(user, 'display_name') else user.email} ({user.email})")
+    logger.info(f"🔍 Is authenticated: {user.is_authenticated}")
+    
+    if not user.is_authenticated:
+        logger.error("❌ User not authenticated for discovery endpoint")
+        return Response({
+            'error': True,
+            'message': _('Authentication required')
+        }, status=status.HTTP_401_UNAUTHORIZED)
+    
     # Get query parameters
     page = int(request.query_params.get('page', 1))
     page_size = int(request.query_params.get('page_size', 10))
@@ -45,15 +59,38 @@ def get_discovery_profiles(request):
     # Calculate offset
     offset = (page - 1) * page_size
     
+    # LOG 2: Préférences utilisateur
+    try:
+        user_profile = user.profile
+        logger.info(f"📋 User preferences:")
+        logger.info(f"   - Age range: {user_profile.age_min_preference}-{user_profile.age_max_preference}")
+        logger.info(f"   - Max distance: {user_profile.distance_max_km}km")
+        logger.info(f"   - Genders sought: {user_profile.genders_sought}")
+        logger.info(f"   - Verified only: {user_profile.verified_only}")
+        logger.info(f"   - Online only: {user_profile.online_only}")
+        logger.info(f"   - Allow in discovery: {user_profile.allow_profile_in_discovery}")
+    except Exception as e:
+        logger.warning(f"⚠️  Could not log user preferences: {str(e)}")
+    
     # Get recommendations
     profiles = RecommendationService.get_recommendations(
-        user=request.user,
+        user=user,
         limit=page_size,
         offset=offset
     )
     
-    # Serialize profiles
-    serializer = DiscoveryProfileSerializer(profiles, many=True)
+    # LOG 3: Résultats
+    logger.info(f"✅ Recommendations service returned: {len(profiles)} profiles")
+    
+    # Serialize profiles with request context for proper URL handling
+    serializer = DiscoveryProfileSerializer(
+        profiles, 
+        many=True,
+        context={'request': request}
+    )
+    
+    # LOG 4: Réponse finale
+    logger.info(f"📤 Sending response - count: {len(profiles)}, page: {page}, page_size: {page_size}")
     
     # Build response with pagination info (standardised keys)
     return Response({
@@ -107,6 +144,10 @@ def like_profile(request):
         from .models import Match
         match = Match.get_match_between(request.user, target_user)
         
+        # Get updated counters
+        daily_limit = MatchingService.get_daily_like_limit(request.user)
+        super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
+        
         return Response({
             'status': 'matched',
             'match_id': str(match.id),
@@ -116,11 +157,22 @@ def like_profile(request):
                 'main_photo_url': target_user.profile.photos.filter(
                     is_main=True
                 ).first().photo_url if hasattr(target_user, 'profile') else None
-            }
+            },
+            'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
+            'super_likes_remaining': super_likes_remaining
         }, status=status.HTTP_200_OK)
     
+    # Get updated counters
+    daily_limit = MatchingService.get_daily_like_limit(request.user)
+    super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
+    
+    # Debug logging
+    logger.info(f"✅ Like successful - User: {request.user.id}, is_premium: {getattr(request.user, 'is_premium', False)}, is_verified: {getattr(request.user, 'is_verified', False)}, Remaining likes: {daily_limit.get('remaining_likes', 0)}")
+    
     return Response({
-        'status': 'liked'
+        'status': 'liked',
+        'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
+        'super_likes_remaining': super_likes_remaining
     }, status=status.HTTP_201_CREATED)
 
 
@@ -161,9 +213,16 @@ def dislike_profile(request):
             'message': error_msg
         }, status=status.HTTP_400_BAD_REQUEST)
     
+    # Get updated counters
+    daily_limit = MatchingService.get_daily_like_limit(request.user)
+    super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
+    
     return Response({
-        'status': 'disliked'
+        'status': 'disliked',
+        'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
+        'super_likes_remaining': super_likes_remaining
     }, status=status.HTTP_201_CREATED)
+
 
 
 @api_view(['POST'])
@@ -216,6 +275,10 @@ def superlike_profile(request):
         from .models import Match
         match = Match.get_match_between(request.user, target_user)
         
+        # Get updated counters
+        daily_limit = MatchingService.get_daily_like_limit(request.user)
+        super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
+        
         return Response({
             'status': 'matched_with_superlike',
             'match_id': str(match.id),
@@ -225,11 +288,19 @@ def superlike_profile(request):
                 'main_photo_url': target_user.profile.photos.filter(
                     is_main=True
                 ).first().photo_url if hasattr(target_user, 'profile') else None
-            }
+            },
+            'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
+            'super_likes_remaining': super_likes_remaining
         }, status=status.HTTP_200_OK)
     
+    # Get updated counters
+    daily_limit = MatchingService.get_daily_like_limit(request.user)
+    super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
+    
     return Response({
-        'status': 'superliked'
+        'status': 'superliked',
+        'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
+        'super_likes_remaining': super_likes_remaining
     }, status=status.HTTP_201_CREATED)
 
 
@@ -344,4 +415,110 @@ def activate_boost(request):
     return Response({
         'status': 'boost_activated',
         'boost': serializer.data
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['PUT'])
+@permission_classes([permissions.IsAuthenticated])
+@transaction.atomic
+def update_discovery_filters(request):
+    """
+    Update discovery search filters.
+    
+    PUT /api/v1/discovery/filters
+    
+    Body:
+    {
+        "age_min": 25,
+        "age_max": 40,
+        "distance_max_km": 50,
+        "genders": ["female", "non-binary"] or ["all"],
+        "relationship_types": ["serious", "casual"] or ["all"],
+        "verified_only": false,
+        "online_only": false
+    }
+    """
+    logger.info(f"📝 Updating discovery filters for user: {request.user.id}")
+    
+    # Check if user has a profile
+    if not hasattr(request.user, 'profile'):
+        return Response({
+            'error': True,
+            'message': _('Profile not found.')
+        }, status=status.HTTP_404_NOT_FOUND)
+    
+    # Validate input
+    serializer = SearchFilterSerializer(data=request.data)
+    
+    if not serializer.is_valid():
+        logger.warning(f"❌ Invalid filter data: {serializer.errors}")
+        return Response({
+            'error': True,
+            'message': _('Validation error'),
+            'details': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Update profile filters
+    try:
+        profile = serializer.update_profile_filters(request.user.profile)
+        
+        logger.info(f"✅ Filters updated successfully for user: {request.user.id}")
+        logger.info(f"   - Age range: {profile.age_min_preference}-{profile.age_max_preference}")
+        logger.info(f"   - Max distance: {profile.distance_max_km}km")
+        logger.info(f"   - Genders: {profile.genders_sought}")
+        logger.info(f"   - Relationship types: {profile.relationship_types_sought}")
+        logger.info(f"   - Verified only: {profile.verified_only}")
+        logger.info(f"   - Online only: {profile.online_only}")
+        
+        return Response({
+            'status': 'success',
+            'message': _('Filters updated successfully'),
+            'filters': {
+                'age_min': profile.age_min_preference,
+                'age_max': profile.age_max_preference,
+                'distance_max_km': profile.distance_max_km,
+                'genders': profile.genders_sought if profile.genders_sought else ['all'],
+                'relationship_types': profile.relationship_types_sought if profile.relationship_types_sought else ['all'],
+                'verified_only': profile.verified_only,
+                'online_only': profile.online_only
+            }
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"❌ Error updating filters: {str(e)}")
+        return Response({
+            'error': True,
+            'message': _('An error occurred while updating filters.')
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_discovery_filters(request):
+    """
+    Get current discovery search filters.
+    
+    GET /api/v1/discovery/filters
+    """
+    logger.info(f"📖 Getting discovery filters for user: {request.user.id}")
+    
+    # Check if user has a profile
+    if not hasattr(request.user, 'profile'):
+        return Response({
+            'error': True,
+            'message': _('Profile not found.')
+        }, status=status.HTTP_404_NOT_FOUND)
+    
+    profile = request.user.profile
+    
+    return Response({
+        'filters': {
+            'age_min': profile.age_min_preference,
+            'age_max': profile.age_max_preference,
+            'distance_max_km': profile.distance_max_km,
+            'genders': profile.genders_sought if profile.genders_sought else ['all'],
+            'relationship_types': profile.relationship_types_sought if profile.relationship_types_sought else ['all'],
+            'verified_only': profile.verified_only,
+            'online_only': profile.online_only
+        }
     }, status=status.HTTP_200_OK)

@@ -38,9 +38,8 @@ class LikesReceivedView(generics.ListAPIView):
         # Get users who liked the current user
         return Profile.objects.filter(
             user__in=Like.objects.filter(
-                target_user=self.request.user,
-                is_like=True
-            ).values_list('user', flat=True)
+                to_user=self.request.user
+            ).values_list('from_user', flat=True)
         ).select_related('user')
     
     def list(self, request, *args, **kwargs):
@@ -65,10 +64,9 @@ class SuperLikesReceivedView(generics.ListAPIView):
         # Get users who super liked the current user
         return Profile.objects.filter(
             user__in=Like.objects.filter(
-                target_user=self.request.user,
-                is_like=True,
-                is_super_like=True
-            ).values_list('user', flat=True)
+                to_user=self.request.user,
+                like_type=Like.SUPER
+            ).values_list('from_user', flat=True)
         ).select_related('user')
     
     def list(self, request, *args, **kwargs):

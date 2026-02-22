@@ -2,7 +2,7 @@
 Discovery URLs for matching app.
 """
 from django.urls import path
-from matching import views_discovery
+from matching import views_discovery, views_history
 
 app_name = 'discovery'
 
@@ -20,6 +20,12 @@ urlpatterns = [
     path('interactions/superlike', views_discovery.superlike_profile, name='superlike'),
     path('interactions/rewind', views_discovery.rewind_last_swipe, name='rewind'),
     path('interactions/liked-me', views_discovery.get_likes_received, name='liked-me'),
+    
+    # Interaction history
+    path('interactions/my-likes', views_history.get_my_likes, name='my-likes'),
+    path('interactions/my-passes', views_history.get_my_passes, name='my-passes'),
+    path('interactions/<uuid:interaction_id>/revoke', views_history.revoke_interaction, name='revoke'),
+    path('interactions/stats', views_history.get_interaction_stats, name='stats'),
     
     # Boost
     path('boost/activate', views_discovery.activate_boost, name='activate-boost'),

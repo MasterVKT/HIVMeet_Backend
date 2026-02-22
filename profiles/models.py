@@ -145,7 +145,19 @@ class Profile(models.Model):
         models.CharField(max_length=20, choices=GENDER_CHOICES),
         blank=True,
         default=list,
-        verbose_name=_('Gender preferences')
+        null=False,  # Prevent NULL values
+        verbose_name=_('Gender preferences'),
+        help_text=_('List of genders this profile is interested in. Empty list means open to all genders.')
+    )
+    
+    # Additional search filters
+    verified_only = models.BooleanField(
+        default=False,
+        verbose_name=_('Show verified profiles only')
+    )
+    online_only = models.BooleanField(
+        default=False,
+        verbose_name=_('Show online profiles only')
     )
     
     # Visibility settings
@@ -193,6 +205,30 @@ class Profile(models.Model):
     
     def __str__(self):
         return f"{self.user.display_name}'s profile"
+    
+    def clean(self):
+        """Validate the profile."""
+        from django.core.exceptions import ValidationError
+        
+        # Ensure genders_sought is a list, never NULL or empty string
+        if self.genders_sought is None:
+            self.genders_sought = []
+        elif isinstance(self.genders_sought, str) and not self.genders_sought:
+            self.genders_sought = []
+        
+        # Validate all gender choices are valid
+        if self.genders_sought:
+            valid_genders = dict(self.GENDER_CHOICES).keys()
+            invalid = [g for g in self.genders_sought if g not in valid_genders]
+            if invalid:
+                raise ValidationError({
+                    'genders_sought': _('Invalid genders: %(invalid)s') % {'invalid': invalid}
+                })
+    
+    def save(self, *args, **kwargs):
+        """Save the profile with validation."""
+        self.clean()
+        super().save(*args, **kwargs)
     
     def get_location_display(self):
         """Get displayable location based on privacy settings."""
