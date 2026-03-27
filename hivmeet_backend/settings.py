@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-your-secret-key-here')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=True, cast=bool)
+DEBUG = config('DEBUG', default='True') == 'True'
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,10.0.2.2,0.0.0.0', cast=Csv())
 
@@ -66,6 +66,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'hivmeet_backend.security.RateLimitMiddleware',  # Middleware de limitation de debit
     'subscriptions.middleware.PremiumRequiredMiddleware',
     'hivmeet_backend.middleware.PremiumStatusMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -125,7 +126,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Internationalization
-# Par défaut FR, mais `LocaleMiddleware` respecte `Accept-Language`
+# Par defaut FR, mais `LocaleMiddleware` respecte `Accept-Language`
 LANGUAGE_CODE = 'fr'
 TIME_ZONE = 'UTC'
 USE_I18N = True
@@ -133,7 +134,7 @@ USE_TZ = True
 
 # Languages supported
 LANGUAGES = [
-    ('fr', 'Français'),
+    ('fr', 'Francais'),
     ('en', 'English'),
 ]
 
@@ -198,8 +199,8 @@ SIMPLE_JWT = {
     'TOKEN_TYPE_CLAIM': 'token_type',
 }
 
-# CORS settings - Configuration pour Flutter et développement
-CORS_ALLOW_ALL_ORIGINS = True  # Temporaire pour diagnostic/développement
+# CORS settings - Configuration pour Flutter et developpement
+CORS_ALLOW_ALL_ORIGINS = True  # Temporaire pour diagnostic/developpement
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://localhost:8080',
@@ -231,14 +232,14 @@ CORS_ALLOW_METHODS = [
     'PUT',
 ]
 
-# Permettre toutes les origines pour Flutter (développement)
+# Permettre toutes les origines pour Flutter (developpement)
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^http://10\.0\.2\..*",      # Émulateur Android
+    r"^http://10\.0\.2\..*",      # Emulateur Android
     r"^http://127\.0\.0\.1:.*",   # Localhost
     r"^http://localhost:.*",      # Localhost alternative
 ]
 
-# Celery Configuration (temporairement désactivé pour le développement)
+# Celery Configuration (temporairement desactive pour le developpement)
 # CELERY_BROKER_URL = 'redis://localhost:6379/0'
 # CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 CELERY_BROKER_URL = 'memory://'
@@ -283,10 +284,8 @@ CELERY_BEAT_SCHEDULE = {
 # Configuration Firebase (restaurer chemin original)
 FIREBASE_CREDENTIALS_PATH = config(
     'FIREBASE_CREDENTIALS_PATH', 
-    default=BASE_DIR / 'credentials' / 'hivmeet_firebase_credentials.json'
+    default=str(BASE_DIR / 'credentials' / 'hivmeet_firebase_credentials.json')
 )
-
-# Ajouter init si pas déjà (fusion)
 
 FIREBASE_STORAGE_BUCKET = config(
     'FIREBASE_STORAGE_BUCKET', 
@@ -337,7 +336,8 @@ LOGGING = {
         'verbose': {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
             'style': '{',
-        },        'simple': {
+        },
+        'simple': {
             'format': '{levelname} {message}',
             'style': '{',
         },

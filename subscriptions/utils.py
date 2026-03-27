@@ -198,43 +198,133 @@ def get_premium_limits(user):
     
     Returns:
         dict: Feature limits and current usage
-    """
-    if not is_premium_user(user):
-        return {
-            'is_premium': False,
-            'limits': {}
-        }
-    
-    subscription = get_user_subscription(user)
-    if not subscription:
-        return {
-            'is_premium': True,
-            'limits': {}
-        }
-    
-    # Check and reset counters
-    from .services import PremiumFeatureService
-    PremiumFeatureService.check_and_reset_counters(subscription)
-    
-    return {
-        'is_premium': True,
-        'limits': {
-            'boosts': {
-                'total': subscription.plan.monthly_boosts_count,
-                'remaining': subscription.boosts_remaining,
-                'reset_date': subscription.last_boosts_reset + timezone.timedelta(days=30)
-            },
-            'super_likes': {
-                'total': subscription.plan.daily_super_likes_count,
-                'remaining': subscription.super_likes_remaining,
-                'reset_date': subscription.last_super_likes_reset + timezone.timedelta(days=1)
-            },
-            'features': {
-                'unlimited_likes': subscription.plan.unlimited_likes,
-                'can_see_likers': subscription.plan.can_see_likers,
-                'can_rewind': subscription.plan.can_rewind,
-                'media_messaging': subscription.plan.media_messaging_enabled,
-                'calls': subscription.plan.audio_video_calls_enabled
+        {
+            'is_premium': bool,
+            'limits': {
+                'super_likes': {
+                    'total': int,
+                    'remaining': int,
+                    'reset_date': datetime or None
+                },
+                'boosts': {
+                    'total': int,
+                    'remaining': int,
+                    'reset_date': datetime or None
+                },
+                'features': {
+                    'unlimited_likes': bool,
+                    'can_see_likers': bool,
+                    'can_rewind': bool,
+                    'media_messaging': bool,
+                    'calls': bool
+                }
             }
         }
-    }
+    """
+    try:
+        if not is_premium_user(user):
+            return {
+                'is_premium': False,
+                'limits': {
+                    'super_likes': {
+                        'total': 0,
+                        'remaining': 0,
+                        'reset_date': None
+                    },
+                    'boosts': {
+                        'total': 0,
+                        'remaining': 0,
+                        'reset_date': None
+                    },
+                    'features': {
+                        'unlimited_likes': False,
+                        'can_see_likers': False,
+                        'can_rewind': False,
+                        'media_messaging': False,
+                        'calls': False
+                    }
+                }
+            }
+        
+        subscription = get_user_subscription(user)
+        if not subscription:
+            return {
+                'is_premium': True,
+                'limits': {
+                    'super_likes': {
+                        'total': 0,
+                        'remaining': 0,
+                        'reset_date': None
+                    },
+                    'boosts': {
+                        'total': 0,
+                        'remaining': 0,
+                        'reset_date': None
+                    },
+                    'features': {
+                        'unlimited_likes': False,
+                        'can_see_likers': False,
+                        'can_rewind': False,
+                        'media_messaging': False,
+                        'calls': False
+                    }
+                }
+            }
+        
+        # Check and reset counters
+        from .services import PremiumFeatureService
+        PremiumFeatureService.check_and_reset_counters(subscription)
+        
+        return {
+            'is_premium': True,
+            'limits': {
+                'boosts': {
+                    'total': subscription.plan.monthly_boosts_count,
+                    'remaining': subscription.boosts_remaining,
+                    'reset_date': subscription.last_boosts_reset + timezone.timedelta(days=30)
+                },
+                'super_likes': {
+                    'total': subscription.plan.daily_super_likes_count,
+                    'remaining': subscription.super_likes_remaining,
+                    'reset_date': subscription.last_super_likes_reset + timezone.timedelta(days=1)
+                },
+                'features': {
+                    'unlimited_likes': subscription.plan.unlimited_likes,
+                    'can_see_likers': subscription.plan.can_see_likers,
+                    'can_rewind': subscription.plan.can_rewind,
+                    'media_messaging': subscription.plan.media_messaging_enabled,
+                    'calls': subscription.plan.audio_video_calls_enabled
+                }
+            }
+        }
+    
+    except Exception as e:
+        import logging
+        logger = logging.getLogger('hivmeet.subscriptions')
+        logger.error(
+            f"Error calculating premium limits for user {user.id if user else 'None'}: {str(e)}",
+            exc_info=True
+        )
+        # Return safe defaults on error
+        return {
+            'is_premium': False,
+            'limits': {
+                'super_likes': {
+                    'total': 0,
+                    'remaining': 0,
+                    'reset_date': None
+                },
+                'boosts': {
+                    'total': 0,
+                    'remaining': 0,
+                    'reset_date': None
+                },
+                'features': {
+                    'unlimited_likes': False,
+                    'can_see_likers': False,
+                    'can_rewind': False,
+                    'media_messaging': False,
+                    'calls': False
+                }
+            }
+        }

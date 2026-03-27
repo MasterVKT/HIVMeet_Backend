@@ -8,12 +8,13 @@ from rest_framework.pagination import PageNumberPagination
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from django.db import transaction
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Case, When
 from django.utils import timezone
 import logging
 
 from .models import InteractionHistory, Match, DailyLikeLimit
 from .serializers import InteractionHistorySerializer, InteractionStatsSerializer
+from .interaction_service import InteractionService
 from subscriptions.utils import get_premium_limits
 
 logger = logging.getLogger('hivmeet.matching')
@@ -37,16 +38,18 @@ def get_my_likes(request):
     Query params:
     - page: integer (default: 1)
     - page_size: integer (default: 20, max: 100)
-    - include_matched: boolean (default: false)
+    - matched_only: boolean (default: false) - If true, return only likes with active matches
     - include_revoked: boolean (default: false)
     - order_by: string (default: 'recent') - Options: 'recent', 'oldest'
     """
     logger.info(f"📖 User {request.user.id} requesting likes history")
     
     # Get query parameters
-    include_matched = request.query_params.get('include_matched', 'false').lower() == 'true'
+    matched_only = request.query_params.get('matched_only', 'false').lower() == 'true'
     include_revoked = request.query_params.get('include_revoked', 'false').lower() == 'true'
     order_by = request.query_params.get('order_by', 'recent')
+    
+    logger.info(f"   matched_only={matched_only}, include_revoked={include_revoked}, order_by={order_by}")
     
     # Get likes
     interactions = InteractionHistory.get_user_likes(
@@ -54,24 +57,38 @@ def get_my_likes(request):
         include_revoked=include_revoked
     )
     
-    # Filter out matched if needed
-    if not include_matched:
-        # Get IDs of users with active matches
-        matched_user_ids = Match.objects.filter(
-            Q(user1=request.user) | Q(user2=request.user),
-            status=Match.ACTIVE
-        ).values_list('user1_id', 'user2_id')
-        
-        # Flatten the list
-        matched_ids = set()
-        for user1_id, user2_id in matched_user_ids:
-            matched_ids.add(user1_id)
-            matched_ids.add(user2_id)
-        matched_ids.discard(request.user.id)
-        
-        interactions = interactions.exclude(target_user_id__in=matched_ids)
+    # Get IDs of users with active matches (used for filtering)
+    matched_user_ids = Match.objects.filter(
+        Q(user1=request.user) | Q(user2=request.user),
+        status=Match.ACTIVE
+    ).values_list(
+        # Get the other user's ID in each match (not the request user)
+        Case(
+            When(user1=request.user, then='user2_id'),
+            default='user1_id'
+        ),
+        flat=True,
+    )
+    # Evaluate to list immediately to avoid stale data
+    matched_ids = set(list(matched_user_ids))
     
-    # Ordering
+    logger.info(f"   Active matches found: {len(matched_ids)} users")
+    
+    # Filter based on matched_only parameter:
+    # - matched_only=true: return ONLY likes with active matches
+    # - matched_only=false: return ALL likes (default behavior)
+    if matched_only:
+        if matched_ids:
+            # matched_only=true AND there ARE matches: return ONLY matched likes
+            interactions = interactions.filter(target_user_id__in=matched_ids)
+            logger.info(f"   Filtered to {len(matched_ids)} matched likes")
+        else:
+            # matched_only=true but NO matches: return empty queryset
+            interactions = interactions.none()
+            logger.info(f"   No matches found, returning empty list")
+    # else: matched_only=false: return ALL likes, no filtering
+    
+    # Always order by created_at to ensure deterministic pagination
     if order_by == 'oldest':
         interactions = interactions.order_by('created_at')
     else:
@@ -88,7 +105,7 @@ def get_my_likes(request):
         context={'request': request}
     )
     
-    logger.info(f"✅ Returning {len(serializer.data)} likes for user {request.user.id}")
+    logger.info(f"✅ Returning {len(serializer.data)} likes for user {request.user.id} (matched_only={matched_only})")
     
     return paginator.get_paginated_response(serializer.data)
 

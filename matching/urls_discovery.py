@@ -20,6 +20,7 @@ urlpatterns = [
     path('interactions/superlike', views_discovery.superlike_profile, name='superlike'),
     path('interactions/rewind', views_discovery.rewind_last_swipe, name='rewind'),
     path('interactions/liked-me', views_discovery.get_likes_received, name='liked-me'),
+    path('interactions/status', views_discovery.get_interaction_status, name='interaction-status'),
     
     # Boost
     path('boost/activate', views_discovery.activate_boost, name='activate-boost'),

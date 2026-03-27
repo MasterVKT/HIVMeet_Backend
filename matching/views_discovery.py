@@ -12,6 +12,8 @@ import logging
 from django.utils import timezone
 
 from .services import RecommendationService, MatchingService
+from .daily_likes_service import DailyLikesService
+from .interaction_service import InteractionService
 from .serializers import (
     DiscoveryProfileSerializer,
     LikeActionSerializer,
@@ -92,12 +94,22 @@ def get_discovery_profiles(request):
     # LOG 4: Réponse finale
     logger.info(f"📤 Sending response - count: {len(profiles)}, page: {page}, page_size: {page_size}")
     
+    # Obtenir les informations de limite quotidienne pour le frontend
+    daily_likes_info = DailyLikesService.get_status_summary(user)
+    
     # Build response with pagination info (standardised keys)
     return Response({
-        'count': len(profiles),  # TODO: remplacer par total réel si dispo
+        'count': len(profiles),
         'next': f"?page={page + 1}&page_size={page_size}" if len(profiles) == page_size else None,
         'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
-        'results': serializer.data
+        'results': serializer.data,
+        # Informations de limite quotidienne pour le frontend
+        'daily_likes_remaining': daily_likes_info.get('daily_likes_remaining'),
+        'daily_likes_limit': daily_likes_info.get('daily_likes_limit'),
+        'daily_likes_used_today': daily_likes_info.get('likes_used_today'),
+        'daily_likes_reset_at': daily_likes_info.get('reset_at'),
+        'is_premium': daily_likes_info.get('is_premium'),
+        'super_likes_remaining': daily_likes_info.get('super_likes_remaining'),
     }, status=status.HTTP_200_OK)
 
 
@@ -109,6 +121,15 @@ def like_profile(request):
     Like a profile.
     
     POST /api/v1/discovery/interactions/like
+    
+    Response:
+        {
+            "status": "liked" | "matched",
+            "match_id": "uuid" | null,
+            "daily_likes_remaining": int,
+            "super_likes_remaining": int,
+            "message": str (optional)
+        }
     """
     serializer = LikeActionSerializer(data=request.data)
     
@@ -127,26 +148,41 @@ def like_profile(request):
             'message': _('User not found.')
         }, status=status.HTTP_404_NOT_FOUND)
     
+    # Log debug info avant le like
+    DailyLikesService.log_status(request.user, "BEFORE_LIKE")
+    
     # Process like
-    success, is_match, error_msg = MatchingService.like_profile(
+    success, is_match, error_msg, error_code = MatchingService.like_profile(
         from_user=request.user,
         to_user=target_user
     )
     
     if not success:
+        _error_status_map = {
+            'daily_limit': status.HTTP_429_TOO_MANY_REQUESTS,
+            'premium_required': status.HTTP_403_FORBIDDEN,
+            'already_liked': status.HTTP_409_CONFLICT,
+        }
+        http_status = _error_status_map.get(error_code, status.HTTP_400_BAD_REQUEST)
         return Response({
             'error': True,
-            'message': error_msg
-        }, status=status.HTTP_400_BAD_REQUEST if 'limit' in error_msg else status.HTTP_429_TOO_MANY_REQUESTS)
+            'message': error_msg,
+            'code': error_code,
+        }, status=http_status)
+    
+    # Obtenir les compteurs APRÈS le like en utilisant DailyLikesService
+    daily_likes_remaining = DailyLikesService.get_likes_remaining(request.user)
+    super_likes_remaining = DailyLikesService.get_super_likes_remaining(request.user)
     
     if is_match:
         # Get match details
         from .models import Match
         match = Match.get_match_between(request.user, target_user)
         
-        # Get updated counters
-        daily_limit = MatchingService.get_daily_like_limit(request.user)
-        super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
+        logger.info(f"🎉 MATCH! {request.user.id} <-> {target_user.id}")
+        
+        # Log debug info
+        DailyLikesService.log_status(request.user, "AFTER_MATCH")
         
         return Response({
             'status': 'matched',
@@ -158,21 +194,20 @@ def like_profile(request):
                     is_main=True
                 ).first().photo_url if hasattr(target_user, 'profile') else None
             },
-            'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
-            'super_likes_remaining': super_likes_remaining
+            'daily_likes_remaining': daily_likes_remaining,
+            'super_likes_remaining': super_likes_remaining,
+            'message': _("C'est un match!")
         }, status=status.HTTP_200_OK)
     
-    # Get updated counters
-    daily_limit = MatchingService.get_daily_like_limit(request.user)
-    super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
-    
-    # Debug logging
-    logger.info(f"✅ Like successful - User: {request.user.id}, is_premium: {getattr(request.user, 'is_premium', False)}, is_verified: {getattr(request.user, 'is_verified', False)}, Remaining likes: {daily_limit.get('remaining_likes', 0)}")
+    # Log debug info
+    DailyLikesService.log_status(request.user, "AFTER_LIKE")
+    logger.info(f"✅ Like successful - User: {request.user.id}, daily_likes_remaining: {daily_likes_remaining}")
     
     return Response({
         'status': 'liked',
-        'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
-        'super_likes_remaining': super_likes_remaining
+        'daily_likes_remaining': daily_likes_remaining,
+        'super_likes_remaining': super_likes_remaining,
+        'message': _("Like envoyé avec succès")
     }, status=status.HTTP_201_CREATED)
 
 
@@ -183,10 +218,18 @@ def dislike_profile(request):
     Dislike (pass) a profile.
     
     POST /api/v1/discovery/interactions/dislike
+    
+    Response:
+        {
+            "status": "disliked",
+            "daily_likes_remaining": int,
+            "super_likes_remaining": int
+        }
     """
     serializer = LikeActionSerializer(data=request.data)
     
     if not serializer.is_valid():
+        logger.warning(f"Dislike validation error - data: {request.data} - errors: {serializer.errors}")
         return Response({
             'error': True,
             'message': _('Validation error'),
@@ -201,28 +244,27 @@ def dislike_profile(request):
             'message': _('User not found.')
         }, status=status.HTTP_404_NOT_FOUND)
     
-    # Process dislike
+    # Process dislike — idempotent: already-disliked returns success
     success, error_msg = MatchingService.dislike_profile(
         from_user=request.user,
         to_user=target_user
     )
     
     if not success:
-        return Response({
-            'error': True,
-            'message': error_msg
-        }, status=status.HTTP_400_BAD_REQUEST)
+        # Already passed on this profile — treat as success (idempotent)
+        pass
     
-    # Get updated counters
-    daily_limit = MatchingService.get_daily_like_limit(request.user)
-    super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
+    # Obtenir les compteurs (inchangés par un dislike)
+    daily_likes_remaining = DailyLikesService.get_likes_remaining(request.user)
+    super_likes_remaining = DailyLikesService.get_super_likes_remaining(request.user)
+    
+    logger.info(f"👎 Dislike sent - User: {request.user.id}, daily_likes_remaining: {daily_likes_remaining}")
     
     return Response({
         'status': 'disliked',
-        'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
+        'daily_likes_remaining': daily_likes_remaining,
         'super_likes_remaining': super_likes_remaining
     }, status=status.HTTP_201_CREATED)
-
 
 
 @api_view(['POST'])
@@ -233,12 +275,29 @@ def superlike_profile(request):
     Super like a profile (premium feature).
     
     POST /api/v1/discovery/interactions/superlike
+    
+    Response:
+        {
+            "status": "superliked" | "matched_with_superlike",
+            "match_id": "uuid" | null,
+            "daily_likes_remaining": int,
+            "super_likes_remaining": int,
+            "message": str (optional)
+        }
     """
     if not request.user.is_premium:
         return Response({
             'error': True,
             'message': _('Super likes are a premium feature.')
         }, status=status.HTTP_403_FORBIDDEN)
+    
+    # Vérifier si l'utilisateur peut encore super-liker
+    can_super_like, error_msg = DailyLikesService.can_user_super_like(request.user)
+    if not can_super_like:
+        return Response({
+            'error': True,
+            'message': error_msg
+        }, status=status.HTTP_429_TOO_MANY_REQUESTS)
     
     serializer = LikeActionSerializer(data=request.data)
     
@@ -257,27 +316,42 @@ def superlike_profile(request):
             'message': _('User not found.')
         }, status=status.HTTP_404_NOT_FOUND)
     
+    # Log debug info avant le super like
+    DailyLikesService.log_status(request.user, "BEFORE_SUPERLIKE")
+    
     # Process super like
-    success, is_match, error_msg = MatchingService.like_profile(
+    success, is_match, error_msg, error_code = MatchingService.like_profile(
         from_user=request.user,
         to_user=target_user,
         is_super_like=True
     )
     
     if not success:
+        _error_status_map = {
+            'daily_limit': status.HTTP_429_TOO_MANY_REQUESTS,
+            'premium_required': status.HTTP_403_FORBIDDEN,
+            'already_liked': status.HTTP_409_CONFLICT,
+        }
+        http_status = _error_status_map.get(error_code, status.HTTP_400_BAD_REQUEST)
         return Response({
             'error': True,
-            'message': error_msg
-        }, status=status.HTTP_400_BAD_REQUEST if 'limit' not in error_msg else status.HTTP_429_TOO_MANY_REQUESTS)
+            'message': error_msg,
+            'code': error_code,
+        }, status=http_status)
+    
+    # Obtenir les compteurs APRÈS le super like
+    daily_likes_remaining = DailyLikesService.get_likes_remaining(request.user)
+    super_likes_remaining = DailyLikesService.get_super_likes_remaining(request.user)
     
     if is_match:
         # Get match details
         from .models import Match
         match = Match.get_match_between(request.user, target_user)
         
-        # Get updated counters
-        daily_limit = MatchingService.get_daily_like_limit(request.user)
-        super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
+        logger.info(f"🎉 SUPER LIKE MATCH! {request.user.id} <-> {target_user.id}")
+        
+        # Log debug info
+        DailyLikesService.log_status(request.user, "AFTER_SUPERLIKE_MATCH")
         
         return Response({
             'status': 'matched_with_superlike',
@@ -289,19 +363,48 @@ def superlike_profile(request):
                     is_main=True
                 ).first().photo_url if hasattr(target_user, 'profile') else None
             },
-            'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
-            'super_likes_remaining': super_likes_remaining
+            'daily_likes_remaining': daily_likes_remaining,
+            'super_likes_remaining': super_likes_remaining,
+            'message': _("C'est un match avec un super like!")
         }, status=status.HTTP_200_OK)
     
-    # Get updated counters
-    daily_limit = MatchingService.get_daily_like_limit(request.user)
-    super_likes_remaining = MatchingService.get_super_likes_remaining(request.user)
+    # Log debug info
+    DailyLikesService.log_status(request.user, "AFTER_SUPERLIKE")
+    logger.info(f"⭐ Super like successful - User: {request.user.id}, super_likes_remaining: {super_likes_remaining}")
     
     return Response({
         'status': 'superliked',
-        'daily_likes_remaining': daily_limit.get('remaining_likes', 0),
-        'super_likes_remaining': super_likes_remaining
+        'daily_likes_remaining': daily_likes_remaining,
+        'super_likes_remaining': super_likes_remaining,
+        'message': _("Super like envoyé avec succès")
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_interaction_status(request):
+    """
+    Get current interaction status (daily likes remaining, etc.).
+    
+    GET /api/v1/discovery/interactions/status
+    
+    Response:
+        {
+            "daily_likes_remaining": int,
+            "daily_likes_limit": int | null,
+            "super_likes_remaining": int,
+            "super_likes_limit": int,
+            "is_premium": bool,
+            "reset_at": str (ISO timestamp),
+            "likes_used_today": int,
+            "super_likes_used_today": int
+        }
+    """
+    status_summary = DailyLikesService.get_status_summary(request.user)
+    
+    logger.info(f"📊 Interaction status for {request.user.id}: daily_likes_remaining={status_summary['daily_likes_remaining']}")
+    
+    return Response(status_summary, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])

@@ -312,8 +312,20 @@ class DiscoveryProfileSerializer(serializers.Serializer):
 class LikeActionSerializer(serializers.Serializer):
     """
     Serializer for like/dislike actions.
+    Accepts both 'target_user_id' and 'target_profile_id' (frontend alias).
     """
-    target_user_id = serializers.UUIDField()
+    target_user_id = serializers.UUIDField(required=False)
+    target_profile_id = serializers.UUIDField(required=False)
+
+    def validate(self, data):
+        # Normalise: accept target_profile_id as an alias for target_user_id
+        if not data.get('target_user_id') and data.get('target_profile_id'):
+            data['target_user_id'] = data['target_profile_id']
+        if not data.get('target_user_id'):
+            raise serializers.ValidationError(
+                {'target_user_id': 'This field is required.'}
+            )
+        return data
 
 
 class BoostSerializer(serializers.ModelSerializer):

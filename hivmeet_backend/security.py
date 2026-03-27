@@ -27,6 +27,10 @@ class RateLimitMiddleware(MiddlewareMixin):
         'auth/login': (10, 600),           # 10 per 10 minutes
         'auth/password-reset': (3, 3600),  # 3 per hour
         'profiles/.*?/like': (100, 3600),  # 100 likes per hour
+        'discovery/interactions/like': (30, 300),  # 30 likes per 5 minutes (increased from 20 to improve UX)
+        'discovery/interactions/dislike': (100, 300),  # 100 dislikes per 5 minutes
+        'discovery/interactions/superlike': (10, 3600),  # 10 superlikes per hour
+        'discovery/interactions/rewind': (5, 3600),  # 5 rewinds per hour
         'conversations/.*/messages': (60, 60),  # 60 messages per minute
         'subscriptions/purchase': (5, 3600),    # 5 attempts per hour
     }
@@ -43,13 +47,16 @@ class RateLimitMiddleware(MiddlewareMixin):
         # Check each rate limit pattern
         for pattern, (limit, window) in self.RATE_LIMITS.items():
             if re.match(pattern, path):
+                # Adjust limits based on user type if applicable
+                adjusted_limit = self._get_adjusted_limit(request, pattern, limit)
+                
                 cache_key = f'rate_limit:{pattern}:{client_id}'
                 
                 # Get current count
                 current = cache.get(cache_key, 0)
                 
-                if current >= limit:
-                    logger.warning(f"Rate limit exceeded for {client_id} on {pattern}")
+                if current >= adjusted_limit:
+                    logger.warning(f"Rate limit exceeded for {client_id} on {pattern} (limit: {adjusted_limit})")
                     return JsonResponse({
                         'error': 'rate_limit_exceeded',
                         'message': f'Too many requests. Please try again later.',
@@ -63,14 +70,16 @@ class RateLimitMiddleware(MiddlewareMixin):
     
     def should_rate_limit(self, request):
         """Determine if request should be rate limited."""
-        # Skip rate limiting for internal IPs in debug mode
-        if settings.DEBUG and request.META.get('REMOTE_ADDR') in ['127.0.0.1', 'localhost']:
+        # In DEBUG/development mode, never apply rate limiting.
+        # JWT/Firebase auth is resolved at the DRF view level, so request.user
+        # is still AnonymousUser here — making per-user bypass unreliable in dev.
+        if settings.DEBUG:
             return False
-        
-        # Skip for authenticated admin users
+
+        # In production: skip rate limiting for staff users
         if hasattr(request, 'user') and request.user.is_authenticated and request.user.is_staff:
             return False
-        
+
         return True
     
     def get_client_id(self, request):
@@ -82,6 +91,28 @@ class RateLimitMiddleware(MiddlewareMixin):
         ip = request.META.get('REMOTE_ADDR', '')
         user_agent = request.META.get('HTTP_USER_AGENT', '')
         return hashlib.md5(f'{ip}:{user_agent}'.encode()).hexdigest()
+
+    def _get_adjusted_limit(self, request, pattern, original_limit):
+        """Adjust rate limits based on user type."""
+        # If user is not authenticated, use original limit
+        if not (hasattr(request, 'user') and request.user.is_authenticated):
+            return original_limit
+
+        # For like endpoint, we can increase the limit for premium/verified users
+        if pattern == 'discovery/interactions/like':
+            # Get user properties safely
+            is_premium = getattr(request.user, 'is_premium', False)
+            is_verified = getattr(request.user, 'is_verified', False)
+            
+            # Increase limit for premium users
+            if is_premium:
+                return original_limit * 2  # Double the limit for premium users
+            # Increase limit slightly for verified users
+            elif is_verified:
+                return int(original_limit * 1.5)  # 50% more for verified users
+
+        # For other endpoints, return original limit
+        return original_limit
 
 
 class SecurityHeadersMiddleware(MiddlewareMixin):

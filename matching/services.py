@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from profiles.models import Profile
 from .models import Like, Dislike, Match, ProfileView, Boost, DailyLikeLimit, InteractionHistory
+from .interaction_service import InteractionService
 
 logger = logging.getLogger('hivmeet.matching')
 User = get_user_model()
@@ -90,47 +91,58 @@ class RecommendationService:
         user_profile = user.profile
         
         # Get IDs of users with active (non-revoked) interactions from InteractionHistory
-        interacted_user_ids = InteractionHistory.objects.filter(
-            user=user,
-            is_revoked=False
-        ).values_list('target_user_id', flat=True)
+        # IMPORTANT: Evaluate QuerySets to list NOW to avoid stale data in same request
+        interacted_user_ids_list = list(
+            InteractionHistory.objects.filter(
+                user=user,
+                is_revoked=False
+            ).values_list('target_user_id', flat=True)
+        )
         
         # Also get legacy data (backwards compatibility)
         # Only exclude legacy likes/dislikes that haven't been revoked in InteractionHistory
-        revoked_user_ids = InteractionHistory.objects.filter(
-            user=user,
-            is_revoked=True
-        ).values_list('target_user_id', flat=True)
+        revoked_user_ids_list = list(
+            InteractionHistory.objects.filter(
+                user=user,
+                is_revoked=True
+            ).values_list('target_user_id', flat=True)
+        )
         
-        legacy_liked_ids = Like.objects.filter(
-            from_user=user
-        ).exclude(
-            to_user_id__in=revoked_user_ids
-        ).values_list('to_user_id', flat=True)
+        legacy_liked_ids_list = list(
+            Like.objects.filter(
+                from_user=user
+            ).exclude(
+                to_user_id__in=revoked_user_ids_list
+            ).values_list('to_user_id', flat=True)
+        )
         
-        legacy_disliked_ids = Dislike.objects.filter(
-            from_user=user,
-            expires_at__gt=timezone.now()
-        ).exclude(
-            to_user_id__in=revoked_user_ids
-        ).values_list('to_user_id', flat=True)
+        legacy_disliked_ids_list = list(
+            Dislike.objects.filter(
+                from_user=user,
+                expires_at__gt=timezone.now()
+            ).exclude(
+                to_user_id__in=revoked_user_ids_list
+            ).values_list('to_user_id', flat=True)
+        )
         
-        blocked_user_ids = user.blocked_users.values_list('id', flat=True)
-        blocked_by_ids = User.objects.filter(
-            blocked_users=user
-        ).values_list('id', flat=True)
+        blocked_user_ids_list = list(user.blocked_users.values_list('id', flat=True))
+        blocked_by_ids_list = list(
+            User.objects.filter(
+                blocked_users=user
+            ).values_list('id', flat=True)
+        )
         
         # Combine all excluded user IDs
-        excluded_ids = set(interacted_user_ids) | set(legacy_liked_ids) | set(legacy_disliked_ids) | \
-                      set(blocked_user_ids) | set(blocked_by_ids) | {user.id}
+        excluded_ids = set(interacted_user_ids_list) | set(legacy_liked_ids_list) | set(legacy_disliked_ids_list) | \
+                      set(blocked_user_ids_list) | set(blocked_by_ids_list) | {user.id}
         
         # LOG 2: Profils exclus
         logger.info(f"🚫 Excluding {len(excluded_ids)} profiles:")
-        logger.info(f"   - Active interactions (is_revoked=False): {len(interacted_user_ids)}")
-        logger.info(f"   - Legacy likes: {len(legacy_liked_ids)}")
-        logger.info(f"   - Legacy dislikes: {len(legacy_disliked_ids)}")
-        logger.info(f"   - Blocked users: {len(blocked_user_ids)}")
-        logger.info(f"   - Blocked by: {len(blocked_by_ids)}")
+        logger.info(f"   - Active interactions (is_revoked=False): {len(interacted_user_ids_list)}")
+        logger.info(f"   - Legacy likes: {len(legacy_liked_ids_list)}")
+        logger.info(f"   - Legacy dislikes: {len(legacy_disliked_ids_list)}")
+        logger.info(f"   - Blocked users: {len(blocked_user_ids_list)}")
+        logger.info(f"   - Blocked by: {len(blocked_by_ids_list)}")
         
         # Base query
         query = Profile.objects.select_related('user').prefetch_related('photos').filter(
@@ -237,7 +249,8 @@ class RecommendationService:
             '-is_boosted',
             '-user__last_active',
             '-has_verified',
-            '-profile_completeness'
+            '-profile_completeness',
+            'user__date_joined'  # Stable ordering to prevent pagination cycling (User model uses date_joined, not created_at)
         ).distinct()
         
         # LOG 4: Avant pagination
@@ -323,34 +336,28 @@ class MatchingService:
         """
         Check if user can send a like.
         Returns (can_like, error_message).
+        
+        NOTE: This uses the OLD DailyLikeLimit model. For the new implementation,
+        use DailyLikesService from daily_likes_service.py instead.
+        This method is kept for backward compatibility.
         """
-        # Get or create today's limit record
-        today = date.today()
-        limit, created = DailyLikeLimit.objects.get_or_create(
-            user=user,
-            date=today
-        )
+        # Import the new service
+        from .daily_likes_service import DailyLikesService
         
-        if not limit.has_likes_remaining(user):
-            if user.is_premium:
-                return True, None
-            elif user.is_verified:
-                return False, _("Daily limit of 30 likes reached.")
-            else:
-                return False, _("Daily limit of 20 likes reached. Verify your account to get 30 likes per day.")
-        
-        return True, None
+        return DailyLikesService.can_user_like(user)
     
     @staticmethod
-    def like_profile(from_user: 'UserType', to_user: 'UserType', is_super_like: bool = False) -> Tuple[bool, bool, Optional[str]]:
+    def like_profile(from_user: 'UserType', to_user: 'UserType', is_super_like: bool = False) -> Tuple[bool, bool, Optional[str], Optional[str]]:
         """
         Process a like action.
-        Returns (success, is_match, error_message).
+        Returns (success, is_match, error_message, error_code).
+        error_code is one of: 'already_liked', 'premium_required', 'daily_limit', or None on success.
         """
-        # Check if already liked
+        # Check if already liked — idempotent: treat as success, check for existing match
         if Like.objects.filter(from_user=from_user, to_user=to_user).exists():
-            return False, False, _("Already liked this profile.")
-        
+            is_match = Like.objects.filter(from_user=to_user, to_user=from_user).exists()
+            return True, is_match, None, None
+
         # Check daily limits
         if is_super_like:
             today = date.today()
@@ -360,17 +367,17 @@ class MatchingService:
             )
             
             if not from_user.is_premium:
-                return False, False, _("Super likes are a premium feature.")
+                return False, False, _("Super likes are a premium feature."), 'premium_required'
             
             if not limit.has_super_likes_remaining():
-                return False, False, _("Daily limit of 3 super likes reached.")
+                return False, False, _("Daily limit of 3 super likes reached."), 'daily_limit'
             
             limit.super_likes_count += 1
             limit.save()
         else:
             can_like, error_msg = MatchingService.can_user_like(from_user)
             if not can_like:
-                return False, False, error_msg
+                return False, False, error_msg, 'daily_limit'
             
             # Update daily count
             today = date.today()
@@ -421,35 +428,40 @@ class MatchingService:
                 
                 # TODO: Send match notifications
                 
-            return True, True, None
+            return True, True, None, None
         
         # Update likes received count
         if hasattr(to_user, 'profile'):
             to_user.profile.likes_received += 1
             to_user.profile.save(update_fields=['likes_received'])
         
-        return True, False, None
+        return True, False, None, None
     
     @staticmethod
     def dislike_profile(from_user: 'UserType', to_user: 'UserType') -> Tuple[bool, Optional[str]]:
         """
         Process a dislike (pass) action.
+        Handles both new dislikes and reactivation of expired ones.
         Returns (success, error_message).
         """
-        # Check if already disliked
-        existing = Dislike.objects.filter(
+        # Check if there's an active (non-expired) dislike
+        existing_active = Dislike.objects.filter(
             from_user=from_user,
             to_user=to_user,
             expires_at__gt=timezone.now()
         ).first()
         
-        if existing:
+        if existing_active:
             return False, _("Already passed on this profile.")
         
-        # Create dislike
-        Dislike.objects.create(
+        # Use update_or_create to handle expired dislikes
+        # This prevents IntegrityError when reactivating expired dislikes
+        dislike, created = Dislike.objects.update_or_create(
             from_user=from_user,
-            to_user=to_user
+            to_user=to_user,
+            defaults={
+                'expires_at': timezone.now() + timedelta(days=30)
+            }
         )
         
         # Record in interaction history
@@ -548,33 +560,28 @@ class MatchingService:
         """
         Get user's daily like limit information.
         Returns a dict with remaining_likes and total_likes.
+        
+        NOTE: This method is kept for backward compatibility.
+        For the new implementation, use DailyLikesService from daily_likes_service.py.
         """
-        today = date.today()
-        limit, created = DailyLikeLimit.objects.get_or_create(
-            user=user,
-            date=today
-        )
+        # Import the new service
+        from .daily_likes_service import DailyLikesService
         
-        # Determine total likes based on user status
-        # IMPORTANT: is_premium doit être vérifié avec hasattr pour éviter les erreurs
-        is_premium = getattr(user, 'is_premium', False)
-        is_verified = getattr(user, 'is_verified', False)
+        remaining = DailyLikesService.get_likes_remaining(user)
+        daily_limit = DailyLikesService.get_user_daily_limit(user)
         
-        if is_premium:
-            # Premium users have unlimited likes
-            total_likes = 999  # Display 999 for unlimited
-            remaining_likes = 999
-        elif is_verified:
-            total_likes = 30
-            remaining_likes = max(0, total_likes - limit.likes_count)
-        else:
-            total_likes = 20
-            remaining_likes = max(0, total_likes - limit.likes_count)
+        # If unlimited (premium), return -1 to indicate unlimited
+        if remaining == DailyLikesService.UNLIMITED:
+            return {
+                'remaining_likes': -1,  # -1 indicates unlimited
+                'total_likes': -1,
+                'likes_used': 0
+            }
         
         return {
-            'remaining_likes': remaining_likes,
-            'total_likes': total_likes,
-            'likes_used': limit.likes_count
+            'remaining_likes': remaining,
+            'total_likes': daily_limit if daily_limit != DailyLikesService.UNLIMITED else -1,
+            'likes_used': daily_limit - remaining if daily_limit != DailyLikesService.UNLIMITED else 0
         }
     
     @staticmethod
@@ -582,12 +589,11 @@ class MatchingService:
         """
         Get user's remaining super likes for today.
         Returns the number of super likes remaining.
-        """
-        today = date.today()
-        limit, created = DailyLikeLimit.objects.get_or_create(
-            user=user,
-            date=today
-        )
         
-        total_super_likes = 3
-        return max(0, total_super_likes - limit.super_likes_count)
+        NOTE: This method is kept for backward compatibility.
+        For the new implementation, use DailyLikesService from daily_likes_service.py.
+        """
+        # Import the new service
+        from .daily_likes_service import DailyLikesService
+        
+        return DailyLikesService.get_super_likes_remaining(user)
