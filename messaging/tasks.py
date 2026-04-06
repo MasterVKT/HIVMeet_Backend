@@ -129,4 +129,53 @@ def send_call_notification(callee_id, caller_id, call_type, match_id):
         logger.error(f"Error sending call notification: {str(e)}")
 
 
+@shared_task
+def send_read_notification(recipient_id, reader_id, match_id, message_id):
+    """
+    Send push notification when a message has been read.
+    """
+    try:
+        recipient = User.objects.get(id=recipient_id)
+        reader = User.objects.get(id=reader_id)
+
+        notification_settings = recipient.notification_settings or {}
+        if not notification_settings.get('message_read_notifications', True):
+            return
+
+        tokens = [token['token'] for token in recipient.fcm_tokens if token.get('token')]
+        if not tokens:
+            logger.warning(f"No FCM tokens found for user {recipient.email}")
+            return
+
+        notification = messaging.Notification(
+            title=reader.display_name,
+            body=_("Read your message")
+        )
+
+        message = messaging.MulticastMessage(
+            notification=notification,
+            data={
+                'notification_type': 'MESSAGE_READ',
+                'conversation_id': match_id,
+                'reader_id': str(reader_id),
+                'reader_name': reader.display_name,
+                'message_id': str(message_id),
+                'click_action': 'FLUTTER_NOTIFICATION_CLICK'
+            },
+            tokens=tokens
+        )
+
+        response = messaging.send_multicast(message)
+
+        logger.info(
+            f"Read notification sent to {recipient.email}: "
+            f"{response.success_count} successful, {response.failure_count} failed"
+        )
+
+    except User.DoesNotExist:
+        logger.error(f"User not found: {recipient_id} or {reader_id}")
+    except Exception as e:
+        logger.error(f"Error sending read notification: {str(e)}")
+
+
 # Note: send_match_notification is now handled in matching/tasks.py to avoid duplication

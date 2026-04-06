@@ -11,7 +11,6 @@ import random
 import string
 
 from .models import Profile, Verification
-from hivmeet_backend.firebase_service import firebase_service
 
 logger = logging.getLogger('hivmeet.profiles')
 User = get_user_model()
@@ -43,6 +42,7 @@ def cleanup_user_firebase(sender, instance, **kwargs):
     try:
         # Delete Firebase user if exists
         if instance.firebase_uid:
+            from hivmeet_backend.firebase_service import firebase_service
             firebase_service.delete_user(instance.firebase_uid)
             logger.info(f"Deleted Firebase user: {instance.firebase_uid}")
             

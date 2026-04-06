@@ -323,9 +323,6 @@ class DailyLikesService:
         Returns:
             tuple: (peut_super_liker: bool, message_erreur: str)
         """
-        if not DailyLikesService.is_premium_user(user):
-            return False, _("Les super likes sont une fonctionnalité premium.")
-        
         remaining = DailyLikesService.get_super_likes_remaining(user)
         
         if remaining <= 0:

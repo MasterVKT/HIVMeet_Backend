@@ -30,8 +30,6 @@ from .utils import (
     send_password_reset_email,
     send_welcome_email
 )
-from hivmeet_backend.firebase_service import firebase_service
-from firebase_admin import auth
 
 import logging
 import secrets
@@ -40,12 +38,16 @@ from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from firebase_admin import auth as firebase_auth
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 
 logger = logging.getLogger('hivmeet.auth')
 User = get_user_model()
+
+
+def _firebase_service():
+    from hivmeet_backend.firebase_service import firebase_service
+    return firebase_service
 
 
 def generate_tokens(user, remember_me=False):
@@ -86,6 +88,7 @@ class FirebaseLoginView(APIView):
             return Response({'error': 'ID token requis'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            from firebase_admin import auth as firebase_auth
             decoded_token = firebase_auth.verify_id_token(id_token)
             uid = decoded_token['uid']
             email = decoded_token.get('email')
@@ -155,13 +158,14 @@ class FirebaseLoginView(APIView):
                 }
             }, status=status.HTTP_200_OK)
         
-        except firebase_auth.InvalidIdTokenError:
-            return Response({'error': 'Token invalide'}, status=status.HTTP_400_BAD_REQUEST)
-        except firebase_auth.ExpiredIdTokenError:
-            return Response({'error': 'Token expiré'}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"💥 Erreur: {str(e)}")
-            return Response({'error': f'Erreur serveur: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as exc:
+            message = str(exc).lower()
+            if 'expired' in message:
+                return Response({'error': 'Token expiré'}, status=status.HTTP_400_BAD_REQUEST)
+            if 'invalid' in message or 'verify' in message:
+                return Response({'error': 'Token invalide'}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error(f"💥 Erreur: {str(exc)}")
+            return Response({'error': f'Erreur serveur: {str(exc)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
@@ -183,6 +187,7 @@ def register_view(request):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     try:
+        firebase_service = _firebase_service()
         # Create user in Django
         user = serializer.save()
         
@@ -242,6 +247,7 @@ def verify_email_view(request, verification_token):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     try:
+        firebase_service = _firebase_service()
         user = User.objects.get(id=user_id)
         
         if user.email_verified:
@@ -426,6 +432,7 @@ def reset_password_view(request):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     try:
+        firebase_service = _firebase_service()
         user = User.objects.get(id=user_id)
         
         # Update password

@@ -6,13 +6,27 @@ from django.dispatch import receiver
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import logging
+from contextlib import contextmanager
 from django.utils.translation import gettext as _
 
 from .models import Message, Call
 from .tasks import send_message_notification
 
 logger = logging.getLogger('hivmeet.messaging')
-channel_layer = get_channel_layer()
+
+
+@contextmanager
+def channel_layer_context():
+    """
+    Context manager for safely using channel layer.
+    Yields None if Redis is not available.
+    """
+    layer = None
+    try:
+        layer = get_channel_layer()
+    except Exception as e:
+        logger.warning(f"Redis non disponible (Channel Layer): {str(e)}")
+    yield layer
 
 
 @receiver(post_save, sender=Message)
@@ -33,33 +47,34 @@ def handle_new_message(sender, instance, created, **kwargs):
         except Exception as e:
             logger.error(f"Error sending message notification: {str(e)}")
         
-        # Send real-time update via WebSocket
-        if channel_layer:
-            try:
-                recipient = instance.get_recipient()
-                
-                # Serialize message data
-                message_data = {
-                    'id': str(instance.id),
-                    'client_message_id': instance.client_message_id,
-                    'sender_id': str(instance.sender.id),
-                    'content': instance.content,
-                    'message_type': instance.message_type,
-                    'media_url': instance.media_url,
-                    'created_at': instance.created_at.isoformat(),
-                    'conversation_id': str(instance.match.id)
-                }
-                
-                # Send to recipient
-                async_to_sync(channel_layer.group_send)(
-                    f"user_{recipient.id}",
-                    {
-                        "type": "new_message",
-                        "message": message_data
+        # Send real-time update via WebSocket - use safe channel layer
+        with channel_layer_context() as channel_layer:
+            if channel_layer:
+                try:
+                    recipient = instance.get_recipient()
+                    
+                    # Serialize message data
+                    message_data = {
+                        'id': str(instance.id),
+                        'client_message_id': instance.client_message_id,
+                        'sender_id': str(instance.sender.id),
+                        'content': instance.content,
+                        'message_type': instance.message_type,
+                        'media_url': instance.media_url,
+                        'created_at': instance.created_at.isoformat(),
+                        'conversation_id': str(instance.match.id)
                     }
-                )
-            except Exception as e:
-                logger.error(f"Error sending WebSocket message: {str(e)}")
+                    
+                    # Send to recipient
+                    async_to_sync(channel_layer.group_send)(
+                        f"user_{recipient.id}",
+                        {
+                            "type": "new_message",
+                            "message": message_data
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Erreur envoi WebSocket message: {str(e)}")
 
 
 @receiver(post_save, sender=Call)
@@ -67,7 +82,10 @@ def handle_call_update(sender, instance, created, **kwargs):
     """
     Handle call updates.
     """
-    if channel_layer:
+    with channel_layer_context() as channel_layer:
+        if not channel_layer:
+            return
+            
         try:
             # Determine who to notify
             if instance.status == Call.RINGING:
@@ -107,4 +125,4 @@ def handle_call_update(sender, instance, created, **kwargs):
                 }
             )
         except Exception as e:
-            logger.error(f"Error sending call update: {str(e)}")
+            logger.warning(f"Erreur envoi call update: {str(e)}")

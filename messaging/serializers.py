@@ -1,8 +1,11 @@
 """
 Serializers for messaging app.
 """
+import re
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.utils.html import strip_tags
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
 from .models import Message, Call
@@ -10,25 +13,46 @@ from matching.models import Match
 
 User = get_user_model()
 
+DISALLOWED_MESSAGE_PATTERNS = (
+    r'javascript\s*:',
+    r'data:text/html',
+    r'<\s*script',
+)
+
 
 class MessageSerializer(serializers.ModelSerializer):
     """
     Serializer for messages.
     """
+    message_id = serializers.UUIDField(source='id', read_only=True)
+    conversation_id = serializers.UUIDField(source='match.id', read_only=True)
     sender_id = serializers.UUIDField(source='sender.id', read_only=True)
+    sent_at = serializers.DateTimeField(source='created_at', read_only=True)
+    read_at_by_recipient = serializers.DateTimeField(source='read_at', read_only=True)
+    is_sending = serializers.SerializerMethodField()
+    media_type = serializers.SerializerMethodField()
     is_mine = serializers.SerializerMethodField()
     
     class Meta:
         model = Message
         fields = [
-            'id', 'client_message_id', 'sender_id', 'is_mine',
-            'message_type', 'content', 'media_url', 'media_thumbnail_url',
-            'status', 'created_at', 'delivered_at', 'read_at'
+            'message_id', 'id', 'client_message_id', 'conversation_id', 'sender_id', 'is_mine',
+            'content', 'message_type', 'media_url', 'media_type', 'media_thumbnail_url',
+            'status', 'sent_at', 'created_at', 'delivered_at', 'read_at', 'read_at_by_recipient',
+            'is_sending'
         ]
         read_only_fields = [
             'id', 'sender_id', 'status', 'created_at',
             'delivered_at', 'read_at'
         ]
+
+    def get_is_sending(self, obj):
+        return obj.status == Message.SENDING
+
+    def get_media_type(self, obj):
+        if obj.message_type in [Message.IMAGE, Message.VIDEO, Message.AUDIO]:
+            return obj.message_type
+        return None
     
     def get_is_mine(self, obj):
         """Check if message is from current user."""
@@ -42,15 +66,17 @@ class ConversationSerializer(serializers.ModelSerializer):
     """
     Serializer for conversations (matches with messages).
     """
+    conversation_id = serializers.UUIDField(source='id', read_only=True)
     other_user = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     unread_count_for_me = serializers.SerializerMethodField()
+    last_activity_at = serializers.DateTimeField(source='last_message_at', read_only=True)
     
     class Meta:
         model = Match
         fields = [
-            'id', 'other_user', 'last_message', 'unread_count_for_me',
-            'created_at', 'last_message_at'
+            'conversation_id', 'id', 'other_user', 'last_message', 'unread_count_for_me',
+            'created_at', 'last_message_at', 'last_activity_at'
         ]
         read_only_fields = ['id', 'created_at', 'last_message_at']
     
@@ -65,20 +91,28 @@ class ConversationSerializer(serializers.ModelSerializer):
                 'user_id': str(other_user.id),
                 'display_name': other_user.display_name,
                 'main_photo_url': photo.photo_url if photo else None,
-                'is_online': (timezone.now() - other_user.last_active).total_seconds() < 300
+                'is_online': (timezone.now() - other_user.last_active).total_seconds() < 300,
+                'last_active': other_user.last_active,
             }
         return None
     
     def get_last_message(self, obj):
         """Get the last message in the conversation."""
-        if obj.last_message_at:
-            # Get from match object for performance
-            return {
-                'content_preview': obj.last_message_preview,
-                'sent_at': obj.last_message_at,
-                'is_read_by_me': True  # This would need proper implementation
-            }
-        return None
+        request = self.context.get('request')
+        if not request:
+            return None
+
+        message = Message.objects.filter(match=obj).order_by('-created_at').first()
+        if not message:
+            return None
+
+        return {
+            'message_id': str(message.id),
+            'content_preview': message.content[:100] if message.content else _('Media'),
+            'sender_id': str(message.sender_id),
+            'sent_at': message.created_at,
+            'is_read_by_me': message.sender == request.user or message.status == Message.READ,
+        }
     
     def get_unread_count_for_me(self, obj):
         """Get unread count for current user."""
@@ -103,12 +137,25 @@ class SendMessageSerializer(serializers.Serializer):
         allow_blank=True,
         max_length=500
     )
+
+    def validate_content(self, value):
+        """Sanitize text content and reject obviously unsafe payloads."""
+        raw_value = value or ''
+        for pattern in DISALLOWED_MESSAGE_PATTERNS:
+            if re.search(pattern, raw_value, flags=re.IGNORECASE):
+                raise serializers.ValidationError(
+                    _('Content contains unsupported or unsafe markup.')
+                )
+        sanitized_value = strip_tags(raw_value).strip()
+        return sanitized_value
     
     def validate(self, attrs):
         """Validate message data."""
         message_type = attrs.get('type', 'text')
         content = attrs.get('content', '')
         media_path = attrs.get('media_file_path_on_storage', '')
+        attrs['content'] = self.validate_content(content)
+        content = attrs.get('content', '')
         
         if message_type == 'text' and not content:
             raise serializers.ValidationError({

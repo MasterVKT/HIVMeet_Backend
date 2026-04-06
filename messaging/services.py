@@ -7,7 +7,9 @@ from django.db.models import Q, F, Count
 from django.utils import timezone
 from django.utils.translation import gettext as _
 from django.core.cache import cache
+from django.conf import settings
 from typing import List, Optional, Tuple, TYPE_CHECKING
+from uuid import uuid4
 import logging
 
 if TYPE_CHECKING:
@@ -15,6 +17,8 @@ if TYPE_CHECKING:
 
 from matching.models import Match
 from .models import Message, Call, TypingIndicator
+from .tasks import send_call_notification, send_read_notification
+from subscriptions.utils import check_feature_availability
 
 logger = logging.getLogger('hivmeet.messaging')
 User = get_user_model()
@@ -39,7 +43,7 @@ class MessageService:
             Q(sender=match.get_other_user(user), is_deleted_by_recipient=False)
         )
         
-        # Apply pagination
+        # Apply cursor pagination
         if before_id:
             try:
                 before_message = Message.objects.get(id=before_id, match=match)
@@ -47,28 +51,43 @@ class MessageService:
             except Message.DoesNotExist:
                 pass
         
-        # Limit messages for non-premium users
+        # Limit history for non-premium users
         if not user.is_premium:
-            # Free users can only see last 50 messages
-            total_count = query.count()
-            if total_count > 50:
-                # Get the 50th message from the end
-                cutoff_message = query.order_by('-created_at')[49]
-                query = query.filter(created_at__gte=cutoff_message.created_at)
+            query = query.order_by('-created_at')[:50]
+        else:
+            query = query.order_by('-created_at')
         
-        # Order and limit
-        messages = query.order_by('-created_at')[:limit]
+        # Apply response cap
+        messages = list(query[:limit])
         
-        # Mark messages as read
-        unread_messages = [
-            msg for msg in messages
-            if msg.sender != user and msg.status != Message.READ
+        # Auto-mark received unread messages as read
+        unread_ids = [
+            msg.id for msg in messages
+            if msg.sender != user and msg.status in [Message.SENT, Message.DELIVERED]
         ]
-        
-        for msg in unread_messages:
-            msg.mark_as_read()
-        
-        return list(reversed(messages))
+        if unread_ids:
+            read_at = timezone.now()
+            latest_read_message_id = unread_ids[0]
+            Message.objects.filter(id__in=unread_ids).update(
+                status=Message.READ,
+                read_at=read_at,
+            )
+            match.reset_unread(user)
+            for msg in messages:
+                if msg.id in unread_ids:
+                    msg.status = Message.READ
+                    msg.read_at = read_at
+            try:
+                send_read_notification.delay(
+                    recipient_id=match.get_other_user(user).id,
+                    reader_id=user.id,
+                    match_id=str(match.id),
+                    message_id=str(latest_read_message_id),
+                )
+            except Exception as exc:
+                logger.warning(f"Failed to queue read notification: {exc}")
+
+        return messages
     
     @staticmethod
     def send_message(
@@ -102,7 +121,8 @@ class MessageService:
         
         # Validate media messages for premium users only
         if message_type in [Message.IMAGE, Message.VIDEO, Message.AUDIO]:
-            if not sender.is_premium:
+            feature_check = check_feature_availability(sender, 'media_messaging')
+            if not feature_check['available']:
                 return None, _("Sending media messages is a premium feature.")
             
             if not media_file_path:
@@ -110,23 +130,27 @@ class MessageService:
         
         # Create message
         try:
+            normalized_content = content or ''
+            normalized_media_file_path = media_file_path or ''
+
             message = Message.objects.create(
                 match=match,
                 sender=sender,
-                content=content,
+                content=normalized_content,
                 message_type=message_type,
-                media_file_path=media_file_path,
+                media_file_path=normalized_media_file_path,
                 client_message_id=client_message_id,
                 status=Message.SENT
             )
             
             # Update match last message info
             match.last_message_at = message.created_at
-            match.last_message_preview = content[:100] if content else _("[Media]")
-              # Update unread count for recipient
+            match.last_message_preview = normalized_content[:100] if normalized_content else _("[Media]")
+            match.save(update_fields=['last_message_at', 'last_message_preview'])
+
+            # Update unread count for recipient
             recipient = match.get_other_user(sender)
             match.increment_unread(recipient)
-            match.save()
             
             # TODO: Send push notification to recipient
             
@@ -167,12 +191,104 @@ class MessageService:
                 match=match,
                 user=user
             ).delete()
-          # Cache typing status for real-time updates
+
+        # Cache typing status for real-time updates
         cache_key = f"typing_{match.id}_{user.id}"
         if is_typing:
             cache.set(cache_key, True, timeout=10)  # Expire after 10 seconds
         else:
             cache.delete(cache_key)
+
+    @staticmethod
+    def mark_messages_as_read(user: 'AuthUser', match: Match, last_read_message_id: Optional[str] = None) -> int:
+        """
+        Mark received messages as read up to an optional message.
+        """
+        other_user = match.get_other_user(user)
+        query = Message.objects.filter(
+            match=match,
+            sender=other_user,
+            status__in=[Message.SENT, Message.DELIVERED]
+        )
+
+        if last_read_message_id:
+            try:
+                last_message = Message.objects.get(id=last_read_message_id, match=match)
+                query = query.filter(created_at__lte=last_message.created_at)
+            except Message.DoesNotExist:
+                pass
+
+            latest_message = query.order_by('-created_at').first()
+            updated_count = query.update(status=Message.READ, read_at=timezone.now())
+        if updated_count:
+            match.reset_unread(user)
+            if latest_message:
+                try:
+                    send_read_notification.delay(
+                        recipient_id=other_user.id,
+                        reader_id=user.id,
+                        match_id=str(match.id),
+                        message_id=str(latest_message.id),
+                    )
+                except Exception as exc:
+                    logger.warning(f"Failed to queue read notification: {exc}")
+        return updated_count
+
+    @staticmethod
+    def mark_single_message_as_read(user: 'AuthUser', message: Message) -> bool:
+        """
+        Mark a single message as read if the user is the recipient.
+        """
+        if user == message.sender:
+            return False
+        if user not in [message.match.user1, message.match.user2]:
+            return False
+
+        if message.status in [Message.SENT, Message.DELIVERED]:
+            message.status = Message.READ
+            message.read_at = timezone.now()
+            message.save(update_fields=['status', 'read_at'])
+            message.match.reset_unread(user)
+            try:
+                send_read_notification.delay(
+                    recipient_id=message.sender_id,
+                    reader_id=user.id,
+                    match_id=str(message.match.id),
+                    message_id=str(message.id),
+                )
+            except Exception as exc:
+                logger.warning(f"Failed to queue read notification: {exc}")
+        return True
+
+    @staticmethod
+    def create_media_message(
+        sender: 'AuthUser',
+        match: Match,
+        media_file,
+        media_type: str,
+        text: str = '',
+        client_message_id: Optional[str] = None,
+    ) -> Message:
+        """
+        Persist a media message from uploaded file metadata.
+        """
+        media_file_path = f"messages/{match.id}/{uuid4()}_{media_file.name}"
+        media_url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{media_file_path}"
+
+        message, error = MessageService.send_message(
+            sender=sender,
+            match=match,
+            content=text,
+            message_type=media_type,
+            media_file_path=media_file_path,
+            client_message_id=client_message_id,
+        )
+        if not message:
+            raise ValueError(error or "Unable to create media message")
+
+        message.media_url = media_url
+        message.save(update_fields=['media_url'])
+        return message
     
     @staticmethod
     def get_typing_users(match: Match, exclude_user: Optional['AuthUser'] = None) -> List['AuthUser']:
@@ -244,8 +360,16 @@ class CallService:
                 offer_sdp=offer_sdp,
                 status=Call.RINGING
             )
-            
-            # TODO: Send push notification to callee
+
+            try:
+                send_call_notification.delay(
+                    callee_id=callee.id,
+                    caller_id=caller.id,
+                    call_type=call_type,
+                    match_id=str(match.id),
+                )
+            except Exception as exc:
+                logger.warning(f"Failed to queue call notification: {exc}")
             
             return call, None
             

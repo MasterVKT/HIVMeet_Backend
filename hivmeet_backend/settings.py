@@ -21,6 +21,9 @@ ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,10.0.2.2,0.
 
 # Application definition
 INSTALLED_APPS = [
+    # Daphne ASGI server (must be first)
+    'daphne',
+    
     # Local apps (must be before Django apps when using custom User model)
     'authentication',
     
@@ -31,11 +34,13 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-      # Third party apps
+    
+    # Third party apps
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
     'drf_yasg',
+    'channels',
     # 'rosetta',
     
     # Other local apps (to be added)
@@ -98,6 +103,9 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'hivmeet_backend.wsgi.application'
+
+# ASGI application for WebSocket support
+ASGI_APPLICATION = 'hivmeet_backend.asgi.application'
 
 # Database
 DATABASES = {
@@ -309,11 +317,41 @@ MYCOOLPAY_API_SECRET = config('MYCOOLPAY_API_SECRET', default='')
 MYCOOLPAY_BASE_URL = config('MYCOOLPAY_BASE_URL', default='https://api.mycoolpay.com/v1')
 MYCOOLPAY_WEBHOOK_SECRET = config('MYCOOLPAY_WEBHOOK_SECRET', default='')
 
-# Cache configuration (Redis)
-CACHES = {
+# Cache configuration (Redis for production, LocMemCache for dev)
+if config('USE_REDIS_CACHE', default='False') == 'True':
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': config('REDIS_URL', default='redis://127.0.0.1:6379/1'),
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            }
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'unique-snowflake',
+        }
+    }
+
+# Django Channels configuration
+CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [config('REDIS_URL', default='redis://127.0.0.1:6379/0')],
+            'capacity': 1500,
+            'expiry': 10,
+        },
+    },
+}
+
+# Fallback in-memory channel layer for development
+CHANNEL_LAYERS_FALLBACK = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
     }
 }
 

@@ -6,12 +6,38 @@ from django.dispatch import receiver
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import logging
+from contextlib import contextmanager
 
 from .models import Match, Like, Boost
 from .tasks import send_match_notification
 
 logger = logging.getLogger('hivmeet.matching')
-channel_layer = get_channel_layer()
+
+
+def get_channel_layer_safe():
+    """
+    Get channel layer with error handling for when Redis is not available.
+    Returns None if Redis is not running.
+    """
+    try:
+        return get_channel_layer()
+    except Exception as e:
+        logger.warning(f"Redis non disponible: {str(e)}")
+        return None
+
+
+@contextmanager
+def channel_layer_context():
+    """
+    Context manager for safely using channel layer.
+    Yields None if Redis is not available.
+    """
+    layer = None
+    try:
+        layer = get_channel_layer()
+    except Exception as e:
+        logger.warning(f"Redis non disponible (Channel Layer): {str(e)}")
+    yield layer
 
 
 @receiver(post_save, sender=Match)
@@ -33,24 +59,28 @@ def handle_new_match(sender, instance, created, **kwargs):
             )
             
             # Send real-time notifications if users are online
-            # This would use WebSockets/Channels
-            if channel_layer:
-                async_to_sync(channel_layer.group_send)(
-                    f"user_{instance.user1.id}",
-                    {
-                        "type": "new_match",
-                        "match_id": str(instance.id),
-                        "matched_user_id": str(instance.user2.id)
-                    }
-                )
-                async_to_sync(channel_layer.group_send)(
-                    f"user_{instance.user2.id}",
-                    {
-                        "type": "new_match",
-                        "match_id": str(instance.id),
-                        "matched_user_id": str(instance.user1.id)
-                    }
-                )
+            # This would use WebSockets/Channels - use context manager for safety
+            with channel_layer_context() as channel_layer:
+                if channel_layer:
+                    try:
+                        async_to_sync(channel_layer.group_send)(
+                            f"user_{instance.user1.id}",
+                            {
+                                "type": "new_match",
+                                "match_id": str(instance.id),
+                                "matched_user_id": str(instance.user2.id)
+                            }
+                        )
+                        async_to_sync(channel_layer.group_send)(
+                            f"user_{instance.user2.id}",
+                            {
+                                "type": "new_match",
+                                "match_id": str(instance.id),
+                                "matched_user_id": str(instance.user1.id)
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Erreur envoi notification temps reel: {str(e)}")
                 
         except Exception as e:
             logger.error(f"Error sending match notifications: {str(e)}")
@@ -130,14 +160,18 @@ def handle_like_notification(sender, instance, created, **kwargs):
             instance.like_type == Like.SUPER
         )
         
-        # Send real-time notification if target user is online
-        if channel_layer:
-            notification_type = "super_like" if instance.like_type == Like.SUPER else "like"
-            async_to_sync(channel_layer.group_send)(
-                f"user_{instance.to_user.id}",
-                {
-                    "type": notification_type,
-                    "from_user_id": str(instance.from_user.id),
-                    "like_id": str(instance.id)
-                }
-            )
+        # Send real-time notification if target user is online - use safe channel layer
+        with channel_layer_context() as channel_layer:
+            if channel_layer:
+                try:
+                    notification_type = "super_like" if instance.like_type == Like.SUPER else "like"
+                    async_to_sync(channel_layer.group_send)(
+                        f"user_{instance.to_user.id}",
+                        {
+                            "type": notification_type,
+                            "from_user_id": str(instance.from_user.id),
+                            "like_id": str(instance.id)
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Erreur envoi notification like: {str(e)}")

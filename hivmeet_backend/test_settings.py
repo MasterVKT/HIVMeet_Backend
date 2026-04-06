@@ -85,6 +85,11 @@ LOGGING = {
 # Password validation - simplified for tests
 AUTH_PASSWORD_VALIDATORS = []
 
+# Fast hasher for tests to keep suite deterministic and quick
+PASSWORD_HASHERS = [
+    'django.contrib.auth.hashers.MD5PasswordHasher',
+]
+
 # Rate limiting disabled for tests
 RATELIMIT_ENABLE = False
 

@@ -6,7 +6,6 @@ from django.contrib.auth.models import AnonymousUser
 from django.utils.functional import SimpleLazyObject
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-from hivmeet_backend.firebase_service import firebase_service
 import logging
 
 logger = logging.getLogger('hivmeet.auth')
@@ -71,6 +70,7 @@ class FirebaseAuthenticationMiddleware:
         Authenticate user with Firebase token.
         """
         try:
+            from hivmeet_backend.firebase_service import firebase_service
             # Verify the Firebase ID token
             decoded_token = firebase_service.verify_id_token(token)
             firebase_uid = decoded_token['uid']

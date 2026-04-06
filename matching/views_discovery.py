@@ -285,12 +285,6 @@ def superlike_profile(request):
             "message": str (optional)
         }
     """
-    if not request.user.is_premium:
-        return Response({
-            'error': True,
-            'message': _('Super likes are a premium feature.')
-        }, status=status.HTTP_403_FORBIDDEN)
-    
     # Vérifier si l'utilisateur peut encore super-liker
     can_super_like, error_msg = DailyLikesService.can_user_super_like(request.user)
     if not can_super_like:
@@ -580,8 +574,8 @@ def update_discovery_filters(request):
                 'age_min': profile.age_min_preference,
                 'age_max': profile.age_max_preference,
                 'distance_max_km': profile.distance_max_km,
-                'genders': profile.genders_sought if profile.genders_sought else ['all'],
-                'relationship_types': profile.relationship_types_sought if profile.relationship_types_sought else ['all'],
+                'genders': profile.genders_sought if profile.genders_sought else [],
+                'relationship_types': profile.relationship_types_sought if profile.relationship_types_sought else [],
                 'verified_only': profile.verified_only,
                 'online_only': profile.online_only
             }
@@ -601,7 +595,7 @@ def get_discovery_filters(request):
     """
     Get current discovery search filters.
     
-    GET /api/v1/discovery/filters
+    GET /api/v1/discovery/filters/get
     """
     logger.info(f"📖 Getting discovery filters for user: {request.user.id}")
     
@@ -615,12 +609,13 @@ def get_discovery_filters(request):
     profile = request.user.profile
     
     return Response({
+        'status': 'success',
         'filters': {
             'age_min': profile.age_min_preference,
             'age_max': profile.age_max_preference,
             'distance_max_km': profile.distance_max_km,
-            'genders': profile.genders_sought if profile.genders_sought else ['all'],
-            'relationship_types': profile.relationship_types_sought if profile.relationship_types_sought else ['all'],
+            'genders': profile.genders_sought if profile.genders_sought else [],
+            'relationship_types': profile.relationship_types_sought if profile.relationship_types_sought else [],
             'verified_only': profile.verified_only,
             'online_only': profile.online_only
         }

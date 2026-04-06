@@ -360,20 +360,20 @@ class MatchingService:
 
         # Check daily limits
         if is_super_like:
+            from .daily_likes_service import DailyLikesService
+
+            can_super_like, error_msg = DailyLikesService.can_user_super_like(from_user)
+            if not can_super_like:
+                return False, False, error_msg, 'daily_limit'
+
+            # Keep legacy counter for backward compatibility dashboards.
             today = date.today()
             limit, created = DailyLikeLimit.objects.get_or_create(
                 user=from_user,
                 date=today
             )
-            
-            if not from_user.is_premium:
-                return False, False, _("Super likes are a premium feature."), 'premium_required'
-            
-            if not limit.has_super_likes_remaining():
-                return False, False, _("Daily limit of 3 super likes reached."), 'daily_limit'
-            
             limit.super_likes_count += 1
-            limit.save()
+            limit.save(update_fields=['super_likes_count'])
         else:
             can_like, error_msg = MatchingService.can_user_like(from_user)
             if not can_like:

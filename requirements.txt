@@ -33,6 +33,11 @@ redis==5.0.1
 django-celery-beat==2.5.0
 flower==2.0.1  # Celery monitoring
 
+# WebSocket support (Channels & Daphne)
+channels==4.0.0
+daphne==4.0.0
+channels-redis==4.1.0
+
 # Payment integration
 requests==2.31.0
 cryptography==41.0.7  # For webhook signature verification
@@ -56,6 +61,11 @@ django-redis==5.4.0
 
 # API rate limiting
 django-ratelimit==4.1.0
+
+# WebSocket Real-time (Channels)
+channels==4.0.0
+daphne==4.0.0
+channels-redis==4.1.0
 
 # Email
 django-ses==3.5.0  # For AWS SES

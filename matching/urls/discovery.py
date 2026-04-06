@@ -11,6 +11,10 @@ urlpatterns = [
     path('', views_discovery.get_discovery_profiles, name='discovery'),
     # Discovery profiles - alias pour compatibilité
     path('profiles', views_discovery.get_discovery_profiles, name='profiles'),
+    
+    # Discovery filters
+    path('filters', views_discovery.update_discovery_filters, name='update-filters'),
+    path('filters/get', views_discovery.get_discovery_filters, name='get-filters'),
     # Conserver un alias legacy éventuel pour stabilité (optionnel)
     # path('list', views_discovery.get_discovery_profiles, name='list'),
     
@@ -20,6 +24,7 @@ urlpatterns = [
     path('interactions/superlike', views_discovery.superlike_profile, name='superlike'),
     path('interactions/rewind', views_discovery.rewind_last_swipe, name='rewind'),
     path('interactions/liked-me', views_discovery.get_likes_received, name='liked-me'),
+    path('interactions/status', views_discovery.get_interaction_status, name='interaction-status'),
     
     # Interaction history
     path('interactions/my-likes', views_history.get_my_likes, name='my-likes'),

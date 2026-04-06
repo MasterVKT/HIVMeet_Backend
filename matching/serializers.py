@@ -7,6 +7,7 @@ from django.utils.translation import gettext_lazy as _
 from django.db.models import Q
 
 from .models import Like, Match, Boost, InteractionHistory
+from profiles.models import Profile
 from profiles.serializers import PublicProfileSerializer
 from subscriptions.utils import is_premium_user, get_premium_limits
 
@@ -418,12 +419,64 @@ class SearchFilterSerializer(serializers.Serializer):
 
     def validate(self, data):
         """Validate filter data."""
+        errors = {}
+
         # Validate age range
         if 'age_min' in data and 'age_max' in data:
             if data['age_min'] > data['age_max']:
-                raise serializers.ValidationError({
-                    'age_min': _('Minimum age must be less than or equal to maximum age.')
-                })
+                errors['age_min'] = _('Minimum age must be less than or equal to maximum age.')
+
+        valid_genders = {choice[0] for choice in Profile.GENDER_CHOICES}
+        valid_relationship_types = {choice[0] for choice in Profile.RELATIONSHIP_CHOICES}
+
+        if 'genders' in data:
+            normalized_genders = []
+            for value in data['genders']:
+                if not isinstance(value, str):
+                    errors['genders'] = _('All gender values must be strings.')
+                    normalized_genders = []
+                    break
+                normalized_value = value.strip().lower()
+                if normalized_value == 'all':
+                    normalized_genders = []
+                    break
+                normalized_genders.append(normalized_value)
+
+            invalid_genders = [g for g in normalized_genders if g not in valid_genders]
+            if invalid_genders:
+                errors['genders'] = _('Invalid gender values: %(values)s') % {
+                    'values': ', '.join(invalid_genders)
+                }
+            elif 'genders' not in errors:
+                # Deduplicate while preserving deterministic order
+                data['genders'] = list(dict.fromkeys(normalized_genders))
+
+        if 'relationship_types' in data:
+            normalized_relationship_types = []
+            for value in data['relationship_types']:
+                if not isinstance(value, str):
+                    errors['relationship_types'] = _('All relationship type values must be strings.')
+                    normalized_relationship_types = []
+                    break
+                normalized_value = value.strip().lower()
+                if normalized_value == 'all':
+                    normalized_relationship_types = []
+                    break
+                normalized_relationship_types.append(normalized_value)
+
+            invalid_relationship_types = [
+                r for r in normalized_relationship_types if r not in valid_relationship_types
+            ]
+            if invalid_relationship_types:
+                errors['relationship_types'] = _('Invalid relationship types: %(values)s') % {
+                    'values': ', '.join(invalid_relationship_types)
+                }
+            elif 'relationship_types' not in errors:
+                # Deduplicate while preserving deterministic order
+                data['relationship_types'] = list(dict.fromkeys(normalized_relationship_types))
+
+        if errors:
+            raise serializers.ValidationError(errors)
         
         return data
 
@@ -441,7 +494,7 @@ class SearchFilterSerializer(serializers.Serializer):
         if 'genders' in self.validated_data:
             genders = self.validated_data['genders']
             # Handle "all" case - store empty list
-            if 'all' in genders or not genders:
+            if not genders:
                 profile.genders_sought = []
             else:
                 profile.genders_sought = genders
@@ -449,7 +502,7 @@ class SearchFilterSerializer(serializers.Serializer):
         if 'relationship_types' in self.validated_data:
             rel_types = self.validated_data['relationship_types']
             # Handle "all" case - store empty list
-            if 'all' in rel_types or not rel_types:
+            if not rel_types:
                 profile.relationship_types_sought = []
             else:
                 profile.relationship_types_sought = rel_types
