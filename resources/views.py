@@ -214,16 +214,48 @@ def get_favorite_resources(request):
 
 # Feed views
 
-@api_view(['POST'])
+@api_view(['GET', 'POST'])
 @permission_classes([permissions.IsAuthenticated])
-def create_feed_post(request):
+def feed_posts_view(request):
     """
-    Create a new feed post.
-    
-    POST /api/v1/feed/posts
+    Handle feed posts: GET to list, POST to create.
+
+    GET /api/v1/feed/posts — list feed posts
+    POST /api/v1/feed/posts — create a new feed post
     """
+    if request.method == 'GET':
+        # Get query parameters
+        tag = request.GET.get('tag')
+        sort = request.GET.get('sort', 'recent')
+
+        # Pagination
+        page = int(request.GET.get('page', 1))
+        page_size = int(request.GET.get('page_size', 20))
+        offset = (page - 1) * page_size
+
+        # Get posts
+        posts = FeedService.get_feed_posts(
+            user=request.user,
+            tag=tag,
+            sort=sort,
+            limit=page_size,
+            offset=offset
+        )
+
+        # Serialize
+        serializer = FeedPostSerializer(posts, many=True)
+
+        # Build response (standardised pagination keys)
+        return Response({
+            'count': len(posts),
+            'next': f"?page={page + 1}&page_size={page_size}" if len(posts) == page_size else None,
+            'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
+            'results': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    # POST — create a new feed post
     serializer = FeedPostCreateSerializer(data=request.data)
-    
+
     if not serializer.is_valid():
         return Response({
             'error': True,
@@ -253,44 +285,6 @@ def create_feed_post(request):
     }, status=status.HTTP_202_ACCEPTED)
 
 
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-def get_feed_posts(request):
-    """
-    Get feed posts.
-    
-    GET /api/v1/feed/posts
-    """
-    # Get query parameters
-    tag = request.GET.get('tag')
-    sort = request.GET.get('sort', 'recent')
-    
-    # Pagination
-    page = int(request.GET.get('page', 1))
-    page_size = int(request.GET.get('page_size', 20))
-    offset = (page - 1) * page_size
-    
-    # Get posts
-    posts = FeedService.get_feed_posts(
-        user=request.user,
-        tag=tag,
-        sort=sort,
-        limit=page_size,
-        offset=offset
-    )
-    
-    # Serialize
-    serializer = FeedPostSerializer(posts, many=True)
-    
-    # Build response (standardised pagination keys)
-    return Response({
-        'count': len(posts),
-        'next': f"?page={page + 1}&page_size={page_size}" if len(posts) == page_size else None,
-        'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
-        'results': serializer.data
-    }, status=status.HTTP_200_OK)
-
-
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def toggle_post_like(request, post_id):
@@ -317,69 +311,63 @@ def toggle_post_like(request, post_id):
     }, status=status.HTTP_200_OK)
 
 
-@api_view(['POST'])
+@api_view(['GET', 'POST'])
 @permission_classes([permissions.IsAuthenticated])
-def add_comment(request, post_id):
+def post_comments_view(request, post_id):
     """
-    Add a comment to a feed post.
-    
-    POST /api/v1/feed/posts/{post_id}/comments
+    Handle post comments: GET to list, POST to add.
+
+    GET /api/v1/feed/posts/{post_id}/comments — list comments
+    POST /api/v1/feed/posts/{post_id}/comments — add a comment
     """
+    if request.method == 'GET':
+        # Pagination
+        page = int(request.GET.get('page', 1))
+        page_size = int(request.GET.get('page_size', 20))
+        offset = (page - 1) * page_size
+
+        # Get comments
+        comments = FeedService.get_post_comments(
+            post_id=post_id,
+            limit=page_size,
+            offset=offset
+        )
+
+        # Serialize
+        serializer = FeedCommentSerializer(comments, many=True)
+
+        # Build response (standardised pagination keys)
+        return Response({
+            'count': len(comments),
+            'next': f"?page={page + 1}&page_size={page_size}" if len(comments) == page_size else None,
+            'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
+            'results': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    # POST — add a comment
     serializer = FeedCommentCreateSerializer(data=request.data)
-    
+
     if not serializer.is_valid():
         return Response({
             'error': True,
             'message': _('Validation error'),
             'details': serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
-    
+
     # Add comment
     comment, error_msg = FeedService.add_comment(
         user=request.user,
         post_id=post_id,
         content=serializer.validated_data['content']
     )
-    
+
     if not comment:
         return Response({
             'error': True,
             'message': error_msg
         }, status=status.HTTP_400_BAD_REQUEST)
-    
+
     # Serialize
     response_serializer = FeedCommentSerializer(comment)
-    
+
     return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-
-
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-def get_post_comments(request, post_id):
-    """
-    Get comments for a feed post.
-    
-    GET /api/v1/feed/posts/{post_id}/comments
-    """
-    # Pagination
-    page = int(request.GET.get('page', 1))
-    page_size = int(request.GET.get('page_size', 20))
-    offset = (page - 1) * page_size
-    
-    # Get comments
-    comments = FeedService.get_post_comments(
-        post_id=post_id,
-        limit=page_size,
-        offset=offset
-    )
-    
-    # Serialize
-    serializer = FeedCommentSerializer(comments, many=True)
-    
-    # Build response (standardised pagination keys)
-    return Response({
-        'count': len(comments),
-        'next': f"?page={page + 1}&page_size={page_size}" if len(comments) == page_size else None,
-        'previous': f"?page={page - 1}&page_size={page_size}" if page > 1 else None,
-        'results': serializer.data
-    }, status=status.HTTP_200_OK)

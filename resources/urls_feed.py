@@ -7,12 +7,10 @@ from . import views
 app_name = 'feed'
 
 urlpatterns = [
-    # Feed posts
-    path('posts', views.create_feed_post, name='create-post'),
-    path('posts', views.get_feed_posts, name='post-list'),
+    # Feed posts (GET to list, POST to create)
+    path('posts', views.feed_posts_view, name='posts'),
     path('posts/<uuid:post_id>/like', views.toggle_post_like, name='toggle-like'),
-    
-    # Comments
-    path('posts/<uuid:post_id>/comments', views.add_comment, name='add-comment'),
-    path('posts/<uuid:post_id>/comments', views.get_post_comments, name='comment-list'),
+
+    # Comments (GET to list, POST to add)
+    path('posts/<uuid:post_id>/comments', views.post_comments_view, name='post-comments'),
 ]
