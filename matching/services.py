@@ -354,8 +354,34 @@ class MatchingService:
         error_code is one of: 'already_liked', 'premium_required', 'daily_limit', or None on success.
         """
         # Check if already liked — idempotent: treat as success, check for existing match
-        if Like.objects.filter(from_user=from_user, to_user=to_user).exists():
+        existing_like = Like.objects.filter(from_user=from_user, to_user=to_user).first()
+        if existing_like:
+            # Keep canonical InteractionHistory synchronized even for legacy rows
+            interaction_type = (
+                InteractionHistory.SUPER_LIKE
+                if existing_like.like_type == Like.SUPER
+                else InteractionHistory.LIKE
+            )
+            InteractionHistory.create_or_reactivate(
+                user=from_user,
+                target_user=to_user,
+                interaction_type=interaction_type,
+            )
             is_match = Like.objects.filter(from_user=to_user, to_user=from_user).exists()
+            # If mutual like exists, ensure match is active (reactivate if was deleted)
+            if is_match:
+                if from_user.id < to_user.id:
+                    u1, u2 = from_user, to_user
+                else:
+                    u1, u2 = to_user, from_user
+                match, created = Match.objects.get_or_create(
+                    user1=u1, user2=u2,
+                    defaults={'status': Match.ACTIVE}
+                )
+                if not created and match.status != Match.ACTIVE:
+                    match.status = Match.ACTIVE
+                    match.save(update_fields=['status'])
+                    logger.info(f"Match reactivated between {u1.email} and {u2.email}")
             return True, is_match, None, None
 
         # Check daily limits
@@ -423,6 +449,13 @@ class MatchingService:
                 defaults={'status': Match.ACTIVE}
             )
             
+            # If match already existed but was deleted (unmatched), reactivate it
+            if not created and match.status != Match.ACTIVE:
+                match.status = Match.ACTIVE
+                match.save(update_fields=['status'])
+                created = True
+                logger.info(f"Match reactivated between {user1.email} and {user2.email}")
+            
             if created:
                 logger.info(f"Match created between {user1.email} and {user2.email}")
                 
@@ -452,7 +485,13 @@ class MatchingService:
         ).first()
         
         if existing_active:
-            return False, _("Already passed on this profile.")
+            # Idempotent success while ensuring canonical history is present/recent
+            InteractionHistory.create_or_reactivate(
+                user=from_user,
+                target_user=to_user,
+                interaction_type=InteractionHistory.DISLIKE
+            )
+            return True, None
         
         # Use update_or_create to handle expired dislikes
         # This prevents IntegrityError when reactivating expired dislikes

@@ -1,6 +1,7 @@
 """
 Serializers for profiles app.
 """
+import bleach
 from django.utils import timezone
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -107,6 +108,12 @@ class ProfileCreateUpdateSerializer(serializers.ModelSerializer):
             'allow_profile_in_discovery'
         ]
 
+    def validate_bio(self, value):
+        """Sanitize bio to prevent XSS attacks — strip all HTML tags."""
+        if value:
+            return bleach.clean(value, tags=[], strip=True)
+        return value
+
     def validate_interests(self, value):
         """Validate interests list."""
         if len(value) > 3:
@@ -139,6 +146,7 @@ class PublicProfileSerializer(serializers.ModelSerializer):
     last_active_display = serializers.SerializerMethodField()
     photos = ProfilePhotoSerializer(many=True, read_only=True)
     distance_from_me_km = serializers.SerializerMethodField()
+    liked_at = serializers.DateTimeField(required=False, allow_null=True)
 
     class Meta:
         model = Profile
@@ -146,7 +154,7 @@ class PublicProfileSerializer(serializers.ModelSerializer):
             'id', 'display_name', 'bio', 'age', 'city', 'country',
             'interests', 'relationship_types_sought', 'is_verified',
             'is_premium', 'last_active_display', 'photos',
-            'distance_from_me_km'
+            'distance_from_me_km', 'liked_at'
         ]
 
     def get_age(self, obj):

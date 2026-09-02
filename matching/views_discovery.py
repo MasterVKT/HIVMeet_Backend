@@ -184,15 +184,20 @@ def like_profile(request):
         # Log debug info
         DailyLikesService.log_status(request.user, "AFTER_MATCH")
         
+        # Safely get main photo URL (handle case where user has no photos)
+        main_photo_url = None
+        if hasattr(target_user, 'profile'):
+            main_photo = target_user.profile.photos.filter(is_main=True).first()
+            if main_photo:
+                main_photo_url = main_photo.photo_url
+        
         return Response({
             'status': 'matched',
             'match_id': str(match.id),
             'matched_user_info': {
                 'user_id': str(target_user.id),
                 'display_name': target_user.display_name,
-                'main_photo_url': target_user.profile.photos.filter(
-                    is_main=True
-                ).first().photo_url if hasattr(target_user, 'profile') else None
+                'main_photo_url': main_photo_url
             },
             'daily_likes_remaining': daily_likes_remaining,
             'super_likes_remaining': super_likes_remaining,
@@ -213,6 +218,7 @@ def like_profile(request):
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
+@transaction.atomic
 def dislike_profile(request):
     """
     Dislike (pass) a profile.
