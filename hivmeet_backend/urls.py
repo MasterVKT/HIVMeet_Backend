@@ -2,13 +2,14 @@
 URL configuration for HIVMeet backend project.
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
 from django.conf.urls.i18n import i18n_patterns
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
+from django.http import Http404
 from .health import health_check_view, simple_health_check_view, readiness_check_view, metrics_view
 
 # API documentation schema
@@ -41,6 +42,11 @@ urlpatterns = [
     path('api/v1/auth/', include('authentication.urls')),
 ]
 
+
+def _deny_direct_sensitive_media(request, path):
+    """Development server must not bypass the authenticated media API."""
+    raise Http404
+
 # Internationalized admin
 urlpatterns += i18n_patterns(
     path('admin/', admin.site.urls),
@@ -52,6 +58,12 @@ if settings.DEBUG:
     import debug_toolbar
     urlpatterns += [
         path('__debug__/', include(debug_toolbar.urls)),
+        # ``static()`` below remains available for non-sensitive local assets,
+        # but cannot serve KYC, chat or historic profile media.
+        re_path(
+            r'^media/(?:kyc|messages|profiles|profile_photos)/(?P<path>.*)$',
+            _deny_direct_sensitive_media,
+        ),
     ]
     # Static and media files in development
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

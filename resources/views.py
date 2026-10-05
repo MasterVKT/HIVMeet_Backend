@@ -12,6 +12,7 @@ from django.db.models import Count
 import logging
 
 from .models import Resource, Category, FeedPost, FeedPostComment
+from subscriptions.utils import is_premium_user
 from .services import ResourceService, FeedService
 from .serializers import (
     CategorySerializer,
@@ -49,7 +50,7 @@ class CategoryListView(generics.ListAPIView):
         ).order_by('order', 'name')
         
         # Filter premium categories for non-premium users
-        if not user.is_premium:
+        if not is_premium_user(user):
             queryset = queryset.filter(is_premium_only=False)
         
         return queryset

@@ -1,0 +1,18 @@
+{
+  "description": "HIVMeet backend lifecycle governance for Codex. Stop hook is intentionally disabled because Codex's Stop event does not expose the final assistant message reliably and the audit-marker check would block every subsequent prompt.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.agents/hooks/lifecycle_hook.py\" --event prompt --scope backend --host codex --map \"$(git rev-parse --show-toplevel)/.agents/project-map.json\"",
+            "commandWindows": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& (Join-Path (git rev-parse --show-toplevel) '.agents/hooks/invoke-agent-hook.ps1') -Event prompt -Scope backend -HostName codex\"",
+            "timeout": 15,
+            "statusMessage": "HIVMeet: routage de la requête backend"
+          }
+        ]
+      }
+    ]
+  }
+}

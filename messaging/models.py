@@ -2,6 +2,7 @@
 Messaging models for HIVMeet.
 """
 from django.db import models
+from django.db.models import Q
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
@@ -11,6 +12,81 @@ import uuid
 from matching.models import Match
 
 User = get_user_model()
+
+
+class ConversationHiddenState(models.Model):
+    """Hide a match from one participant's conversation list.
+
+    This is deliberately a per-user state: removing a conversation from one
+    inbox must never remove the match or its message history for the other
+    participant.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    match = models.ForeignKey(
+        Match,
+        on_delete=models.CASCADE,
+        related_name='hidden_states',
+        verbose_name=_('Match'),
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='hidden_conversations',
+        verbose_name=_('User'),
+    )
+    hidden_at = models.DateTimeField(auto_now_add=True, verbose_name=_('Hidden at'))
+
+    class Meta:
+        verbose_name = _('Hidden conversation')
+        verbose_name_plural = _('Hidden conversations')
+        db_table = 'conversation_hidden_states'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['match', 'user'],
+                name='unique_hidden_conversation_per_user',
+            ),
+        ]
+        indexes = [models.Index(fields=['user', 'match'])]
+
+
+class DevicePresenceSession(models.Model):
+    """Server-authoritative foreground session for one connected device.
+
+    A session sends a heartbeat every 30 seconds and expires after 90 seconds.
+    It is intentionally scoped to one connection so a disconnect from one
+    device cannot mark another device for the same account offline.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='presence_sessions',
+        verbose_name=_('User'),
+    )
+    session_id = models.CharField(max_length=180, verbose_name=_('Session ID'))
+    connected_at = models.DateTimeField(auto_now_add=True)
+    last_heartbeat_at = models.DateTimeField(default=timezone.now)
+    disconnected_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'device_presence_sessions'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'session_id'],
+                name='unique_device_presence_session',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['user', 'disconnected_at', 'last_heartbeat_at'],
+                name='presence_user_active_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Presence session for {self.user_id}'
 
 
 class Message(models.Model):
@@ -110,6 +186,30 @@ class Message(models.Model):
         blank=True,
         verbose_name=_('Media file path')
     )
+
+    # Immutable upload facts let clients render an attachment safely without
+    # inferring its type from a mutable URL or extension. Duration is optional:
+    # it is only filled when a supported uploader can determine it.
+    media_mime_type = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name=_('Media MIME type'),
+    )
+    media_size_bytes = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_('Media size in bytes'),
+    )
+    media_file_name = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name=_('Media file name'),
+    )
+    media_duration_ms = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_('Media duration in milliseconds'),
+    )
     
     # Status tracking
     status = models.CharField(
@@ -147,6 +247,27 @@ class Message(models.Model):
         default=False,
         verbose_name=_('Deleted by recipient')
     )
+
+    # A Premium author may retract a message for both participants for a
+    # short, server-enforced period.  Keep the row (and its chronology) so
+    # clients can render the standard "message deleted" marker.
+    is_deleted_for_everyone = models.BooleanField(
+        default=False,
+        verbose_name=_('Deleted for everyone'),
+    )
+    deleted_for_everyone_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_('Deleted for everyone at'),
+    )
+
+    # Set only after a server-authorized Premium text edit. Keeping the
+    # original creation time preserves chronology and the edit deadline.
+    edited_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_('Edited at'),
+    )
     
     class Meta:
         verbose_name = _('Message')
@@ -158,6 +279,17 @@ class Message(models.Model):
             models.Index(fields=['sender', '-created_at']),
             models.Index(fields=['status']),
             models.Index(fields=['client_message_id']),
+            models.Index(
+                fields=['match', 'sender', 'status', 'created_at', 'id'],
+                name='msg_mtch_sndr_stat_created_id',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['match', 'sender', 'client_message_id'],
+                condition=~Q(client_message_id=''),
+                name='uniq_msg_match_sender_client_id',
+            ),
         ]
     
     def __str__(self):
@@ -175,15 +307,18 @@ class Message(models.Model):
             self.save(update_fields=['status', 'delivered_at'])
     
     def mark_as_read(self):
-        """Mark message as read."""
+        """Mark this message as read without touching the denormalized count.
+
+        Conversation-level read receipts must use
+        ``MessageService.mark_messages_as_read``.  It locks the match, updates
+        the precise set of incoming messages and recalculates the count in the
+        same transaction.  This compatibility helper is deliberately limited
+        to the message status for legacy callers.
+        """
         if self.status != self.READ:
             self.status = self.READ
             self.read_at = timezone.now()
             self.save(update_fields=['status', 'read_at'])
-            
-            # Update unread count in match
-            recipient = self.get_recipient()
-            self.match.reset_unread(recipient)
     
     def delete_for_user(self, user):
         """Soft delete message for a specific user."""
@@ -415,7 +550,8 @@ class Call(models.Model):
     @classmethod
     def check_call_limit(cls, user):
         """Check if user has reached call duration limit (30 min for premium)."""
-        if not user.is_premium:
+        from subscriptions.utils import check_feature_availability
+        if not check_feature_availability(user, 'calls')['available']:
             return False, _("Audio/video calls are a premium feature.")
         
         # Check today's total call duration

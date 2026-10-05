@@ -1,5 +1,13 @@
 # Documentation Complète des Endpoints - HIVMeet Backend
 
+> **Archivage KYC v0 :** les sections historiques KYC de ce document ne sont
+> pas contractuelles. Le seul contrat KYC est
+> `docs/kyc/KYC_V1_CONTRACT.openapi.yaml`, complété par
+> `docs/kyc/KYC_PHASE_0_GOVERNANCE.md`. En particulier,
+> `generate-upload-url/` et `submit-documents/` retournent `410`
+> `kyc_legacy_endpoint_deprecated`; aucun chemin de stockage, URL de lecture
+> ou code selfie ne doit être implémenté à partir de ce document.
+
 ## Table des Matières
 1. [Authentification](#authentification)
 2. [Profils Utilisateurs](#profils-utilisateurs)
@@ -642,128 +650,252 @@
 
 ## Messagerie
 
+> Section réécrite le 2026-07-31 d'après le code (`messaging/views.py`,
+> `messaging/serializers.py`, `messaging/urls.py`). Les réponses de liste sont
+> paginées au format DRF standard `{count, next, previous, results}` — il n'y a
+> **pas** d'enveloppe `{"conversations": [...]}` ni `{"messages": [...]}`.
+
 ### GET `/api/v1/conversations/`
-- **Description** : Liste des conversations
+- **Description** : Liste paginée des conversations
 - **Rôle** : Affichage de la liste des conversations
 - **Query Parameters** :
-  - `status` : Statut des conversations (archived, etc.)
+  - `status` : `all` (défaut) | `unread` | `archived`. Toute autre valeur → **400**.
+    `archived` renvoie une liste vide (archivage non persisté).
+  - `page` : défaut `1`
+  - `page_size` : défaut `20`, max `50`
 - **Réponse** (200) :
   ```json
   {
-    "conversations": [
+    "count": 5,
+    "next": "http://.../api/v1/conversations/?page=2",
+    "previous": null,
+    "results": [
       {
+        "conversation_id": "uuid",
         "id": "uuid",
-        "match": {
-          "id": "uuid",
-          "user": {
-            "id": "uuid",
-            "username": "string",
-            "photos": []
-          }
+        "other_user": {
+          "user_id": "uuid",
+          "display_name": "string",
+          "main_photo_url": "string|null",
+          "is_online": true,
+          "last_active": "datetime"
         },
         "last_message": {
-          "content": "string",
+          "message_id": "uuid",
+          "content_preview": "string",
+          "sender_id": "uuid",
           "sent_at": "datetime",
-          "sender_id": "uuid"
+          "is_read_by_me": false
         },
-        "unread_count": 3
+        "unread_count_for_me": 3,
+        "created_at": "datetime",
+        "last_message_at": "datetime",
+        "last_activity_at": "datetime"
       }
     ]
   }
   ```
+  Le champ de non-lus s'appelle `unread_count_for_me` (pas `unread_count`).
+
+---
+
+### GET `/api/v1/conversations/unread-count/`
+- **Description** : Total de messages non lus, toutes conversations confondues
+- **Rôle** : Badge global de l'onglet Messages
+- **Query Parameters** : aucun
+- **Réponse** (200) :
+  ```json
+  {
+    "unread_count": 7
+  }
+  ```
+  Somme calculée côté serveur sur **toutes** les conversations actives et non
+  masquées — contrairement à une somme faite sur la première page de
+  `GET /api/v1/conversations/`, qui plafonne à `page_size`.
+
+---
+
+### DELETE `/api/v1/conversations/{conversation_id}/`
+- **Description** : Masque la conversation pour le participant appelant
+- **Rôle** : « Supprimer » une conversation côté utilisateur uniquement
+- **Réponse** (204) : Aucun contenu. Idempotent.
+  La conversation redevient visible à la réception d'un nouveau message.
 
 ---
 
 ### GET `/api/v1/conversations/{conversation_id}/messages/`
-- **Description** : Récupère les messages d'une conversation
+- **Description** : Récupère les messages d'une conversation (curseur)
 - **Rôle** : Affichage de l'historique des messages
 - **Query Parameters** :
-  - `limit` : Nombre de messages (défaut: 50)
-  - `before_message_id` : ID du message pour la pagination
+  - `limit` : défaut `50`, max `50` (alias accepté : `page_size`)
+  - `before_message_id` : curseur UUID. Curseur inconnu → **400**.
 - **Réponse** (200) :
   ```json
   {
-    "messages": [
+    "count": 120,
+    "next": "?before_message_id=uuid&limit=50",
+    "previous": null,
+    "results": [
       {
+        "message_id": "uuid",
         "id": "uuid",
-        "content": "string",
+        "client_message_id": "string",
+        "conversation_id": "uuid",
         "sender_id": "uuid",
+        "is_mine": true,
+        "content": "string",
+        "message_type": "text",
+        "media_url": "string|null",
+        "media_type": "image|video|audio|null",
+        "media_thumbnail_url": "string|null",
+        "status": "sent|delivered|read",
         "sent_at": "datetime",
-        "is_read": true,
-        "media_url": "string"
+        "created_at": "datetime",
+        "delivered_at": "datetime|null",
+        "read_at": "datetime|null",
+        "read_at_by_recipient": "datetime|null",
+        "is_sending": false
       }
-    ]
+    ],
+    "has_more": true,
+    "show_premium_prompt": false
   }
   ```
+  Les messages sont triés du plus récent au plus ancien. Un `GET` ne modifie
+  jamais l'état de lecture.
 
 ---
 
 ### POST `/api/v1/conversations/{conversation_id}/messages/`
-- **Description** : Envoie un message dans une conversation
+- **Description** : Envoie un message texte
 - **Rôle** : Envoi de messages texte
 - **Requête** :
   ```json
   {
-    "content": "string"
+    "client_message_id": "string (requis, max 100)",
+    "content": "string (requis, max 1000)",
+    "type": "text"
   }
   ```
-- **Réponse** (201) :
-  ```json
-  {
-    "message": {
-      "id": "uuid",
-      "content": "string",
-      "sender_id": "uuid",
-      "sent_at": "datetime",
-      "is_read": false
-    }
-  }
-  ```
+  `type` autre que `text` → **400** (les médias passent par l'endpoint multipart).
+  Un `client_message_id` déjà utilisé renvoie le message existant (idempotence).
+- **Réponse** (201) : l'objet message complet, au format décrit ci-dessus
+  (pas d'enveloppe `{"message": {...}}`).
 
 ---
 
 ### POST `/api/v1/conversations/{conversation_id}/messages/media/`
 - **Description** : Envoie un message média (Premium)
-- **Rôle** : Fonctionnalité premium pour envoyer photos/vidéos
-- **Requête** : FormData avec fichier média
-- **Réponse** (201) :
-  ```json
-  {
-    "message": {
-      "id": "uuid",
-      "content": "string",
-      "media_url": "string",
-      "sender_id": "uuid",
-      "sent_at": "datetime"
-    }
-  }
-  ```
+- **Rôle** : Fonctionnalité premium pour envoyer photos/vidéos/audio
+- **Requête** : `multipart/form-data`
+  - `media_file` : fichier, max 10 Mo
+  - `media_type` : `image` (défaut) | `video` | `audio`
+  - `text` : légende optionnelle, max 500
+  - `client_message_id` : optionnel
+- **Réponse** (201) : l'objet message complet
+- **Erreurs** : **403** si non premium, **400** si fichier invalide
 
 ---
 
 ### PUT `/api/v1/conversations/{conversation_id}/messages/mark-as-read/`
-- **Description** : Marque les messages comme lus
+- **Description** : Marque comme lus les messages entrants jusqu'à un curseur
 - **Rôle** : Mise à jour du statut de lecture
 - **Requête** :
   ```json
   {
-    "message_ids": ["uuid1", "uuid2"]
+    "last_read_message_id": "uuid (optionnel)"
   }
   ```
+  Il n'y a **pas** de paramètre `message_ids`. Sans `last_read_message_id`,
+  tous les messages entrants non lus sont marqués. Un curseur qui n'est pas un
+  message entrant de cette conversation → **400**.
 - **Réponse** (200) :
   ```json
   {
-    "message": "Messages marqués comme lus"
+    "messages_marked": 3,
+    "unread_count_for_me": 0,
+    "read_at": "datetime"
+  }
+  ```
+  `read_at` n'est présent que si `messages_marked > 0`.
+
+---
+
+### PUT `/api/v1/conversations/{conversation_id}/messages/{message_id}/read/`
+- **Description** : Marque un seul message entrant comme lu
+- **Réponse** (200) :
+  ```json
+  {
+    "message": "Message marked as read",
+    "messages_marked": 1,
+    "unread_count_for_me": 0,
+    "read_at": "datetime"
   }
   ```
 
 ---
 
 ### DELETE `/api/v1/conversations/{conversation_id}/messages/{message_id}/`
-- **Description** : Supprime un message
+- **Description** : Supprime un message (soft delete, côté appelant seulement)
 - **Rôle** : Gestion des messages envoyés
 - **Requête** : Aucune
 - **Réponse** (204) : Aucun contenu
+- **Erreurs** : **403** si l'appelant n'est pas participant
+
+---
+
+### POST `/api/v1/conversations/{conversation_id}/typing/`
+- **Description** : Signale que l'utilisateur est en train d'écrire
+- **Requête** :
+  ```json
+  {
+    "is_typing": true
+  }
+  ```
+- **Réponse** (200) :
+  ```json
+  {
+    "is_typing": true
+  }
+  ```
+  Diffuse également `typing.indicator` au groupe WebSocket de la conversation.
+  Le frontend privilégie la voie WebSocket (`typing.start` / `typing.stop`).
+
+---
+
+### GET `/api/v1/conversations/{conversation_id}/presence/`
+- **Description** : État de présence de l'autre participant
+- **Réponse** (200) :
+  ```json
+  {
+    "participant": {
+      "user_id": "uuid",
+      "is_online": true,
+      "last_active": "datetime",
+      "is_typing": false
+    }
+  }
+  ```
+  `is_online` est vrai si `last_active` date de moins de 5 minutes.
+
+---
+
+### WebSocket
+
+Deux canaux, documentés en détail dans
+`docs/MESSAGES_BACKEND_WEBSOCKET_FRONTEND.md` :
+
+| Canal | Portée | Événements serveur → client |
+|---|---|---|
+| `/ws/conversations/{conversation_id}/` | une conversation ouverte | `message.created`, `message.read`, `message.delivered`, `typing.indicator`, `presence.update`, `incoming_call`, `call_update`, `ice.candidate`, `webrtc.offer`, `webrtc.answer`, `pong`, `error` |
+| `/ws/notifications/` | toute la session | `new_match`, `like`, `super_like`, `new_message`, `message_read`, `message_delivered`, `incoming_call`, `call_update`, `pong`, `error` |
+
+Auth : header `Authorization: Bearer <jwt>` ou fallback `?token=<jwt>`.
+Le JWT n'est validé qu'à la connexion (pas de refresh in-band) : le client doit
+se reconnecter avec un token frais à l'expiration.
+
+`new_message` est livré à la fois par WebSocket et par push FCM : dédupliquer
+sur `message_id` (le `notification_id` FCM vaut `msg_<message_id>`).
 
 ---
 
@@ -1096,26 +1228,53 @@
 ## Abonnements Premium
 
 ### GET `/api/v1/subscriptions/plans/`
-- **Description** : Liste des plans d'abonnement disponibles
+- **Description** : Liste paginée des deux plans actifs (`hivmeet_monthly`
+  à 7,99 EUR et `hivmeet_annual` à 57,99 EUR)
 - **Rôle** : Affichage des options premium
 - **Réponse** (200) :
   ```json
   {
-    "plans": [
+    "count": 2,
+    "next": null,
+    "previous": null,
+    "results": [
       {
-        "id": "uuid",
-        "name": "string",
-        "description": "string",
-        "price": 9.99,
+        "plan_id": "hivmeet_monthly",
+        "name": "Abonnement Mensuel",
+        "description": "Accès complet aux fonctionnalités Premium pendant un mois",
+        "price": "7.99",
         "currency": "EUR",
-        "duration_days": 30,
-        "features": [
-          "rewind",
-          "super_like",
-          "boost"
-        ]
+        "base_price": "7.99",
+        "base_currency": "EUR",
+        "billing_interval": "month",
+        "monthly_equivalent": "7.99",
+        "savings_percentage": 0,
+        "recommended": false,
+        "features": {
+          "unlimited_likes": true,
+          "can_see_likers": true,
+          "can_rewind": true,
+          "daily_rewinds_count": 5
+        }
       }
     ]
+  }
+  ```
+
+---
+
+### GET `/api/v1/subscriptions/payment-capabilities/`
+- **Description** : Disponibilité sûre de MyCoolPay et devises activées
+- **Authentification** : Bearer JWT requis
+- **Réponse** (200) :
+  ```json
+  {
+    "provider": "mycoolpay",
+    "available": true,
+    "callback_verification_available": true,
+    "enabled_currencies": ["XAF", "EUR"],
+    "default_currency": "XAF",
+    "effective_currency": "XAF"
   }
   ```
 
@@ -1127,17 +1286,15 @@
 - **Réponse** (200) :
   ```json
   {
-    "subscription": {
-      "id": "uuid",
-      "plan": {
-        "id": "uuid",
-        "name": "string"
-      },
-      "status": "active",
-      "started_at": "datetime",
-      "expires_at": "datetime",
-      "auto_renew": true
-    }
+    "subscription_id": "provider-reference",
+    "plan_id": "hivmeet_monthly",
+    "plan_name": "Abonnement Mensuel",
+    "status": "active",
+    "current_period_start": "datetime",
+    "current_period_end": "datetime",
+    "auto_renew": true,
+    "cancel_at_period_end": false,
+    "features_summary": { "daily_rewinds_count": 5 }
   }
   ```
 
@@ -1146,25 +1303,48 @@
 ### POST `/api/v1/subscriptions/purchase/`
 - **Description** : Achète un abonnement
 - **Rôle** : Processus d'achat premium
+- **Header recommandé** : `Idempotency-Key` (8 à 64 caractères sûrs)
 - **Requête** :
   ```json
   {
-    "plan_id": "uuid",
-    "payment_method": "card",
-    "payment_token": "string"
+    "plan_id": "hivmeet_monthly",
+    "phone_number": "+237699009900",
+    "language": "fr"
   }
   ```
 - **Réponse** (201) :
   ```json
   {
+    "payment_id": "uuid",
+    "payment_url": "https://my-coolpay.com/payment/checkout/...",
+    "payment_status": "pending",
+    "amount": "5241",
+    "currency": "XAF",
+    "idempotent_replay": false
+  }
+  ```
+
+Une répétition avec la même clé et le même plan renvoie la transaction
+existante en 200. Une réutilisation pour un autre plan renvoie 409.
+
+---
+
+### GET `/api/v1/subscriptions/payments/{payment_id}/`
+- **Description** : Statut backend authentifié d'une transaction MyCoolPay
+- **Réponse** (200) :
+  ```json
+  {
+    "payment_id": "uuid",
+    "payment_status": "succeeded",
+    "fulfilled": true,
+    "subscription_id": "provider-reference",
+    "activated_at": "datetime",
     "subscription": {
-      "id": "uuid",
+      "subscription_id": "provider-reference",
+      "plan_id": "hivmeet_monthly",
       "status": "active",
-      "expires_at": "datetime"
-    },
-    "payment": {
-      "id": "uuid",
-      "status": "completed"
+      "current_period_start": "datetime",
+      "current_period_end": "datetime"
     }
   }
   ```
@@ -1196,6 +1376,48 @@
     "expires_at": "datetime"
   }
   ```
+
+---
+
+### POST `/api/v1/subscriptions/current/modify/`
+- **Description** : Modifie l'abonnement actuel (changement de plan / upgrade / downgrade)
+- **Rôle** : Gestion de l'abonnement
+- **Authentification** : Bearer JWT requis
+- **Headers** : `Accept-Language: fr|en`
+- **Requête** :
+  ```json
+  {
+    "new_plan_id": "hivmeet_annual",
+    "proration": true
+  }
+  ```
+- **Réponse** (200) :
+  ```json
+  {
+    "subscription_id": "sub_external_id",
+    "plan_id": "hivmeet_annual",
+    "plan_name": "HIVMeet Premium Annuel",
+    "status": "active",
+    "current_period_start": "datetime",
+    "current_period_end": "datetime",
+    "auto_renew": true,
+    "cancel_at_period_end": false,
+    "features_summary": { ... },
+    "proration": {
+      "credit_amount": 3.50,
+      "charge_amount": 0.00,
+      "currency": "EUR",
+      "prorated_period_start": "datetime",
+      "prorated_period_end": "datetime"
+    }
+  }
+  ```
+- **Erreurs** :
+  - 400 `invalid_plan` — plan introuvable ou inactif
+  - 400 `no_active_subscription` — pas d'abonnement actif
+  - 400 `same_plan` — même plan que le courant
+  - 402 `payment_required` — paiement requis et moyen de paiement invalide
+  - 401 — non authentifié
 
 ---
 
@@ -1514,4 +1736,4 @@ Les messages d'erreur et les contenus sont traduits selon la langue demandée.
 ---
 
 *Documentation générée le : 2024-12-19*
-*Version de l'API : v1* 
+*Version de l'API : v1*

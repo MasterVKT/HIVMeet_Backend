@@ -1,6 +1,7 @@
 """
 Authentication models for HIVMeet.
 """
+from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -233,9 +234,17 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     def add_fcm_token(self, token, device_id=None, platform=None):
         """Add or update FCM token for push notifications."""
+        # A device's FCM registration token is unique per app install, not
+        # per account: if another user was previously logged in on this
+        # device/emulator and never had the token cleanly removed (crash,
+        # uninstall, or a logout whose cleanup call failed), that account
+        # would otherwise keep receiving this device's pushes forever.
+        # Detach the token from every other account before attaching it here.
+        self.detach_fcm_token_from_others(token)
+
         # Remove existing token if it exists
         self.fcm_tokens = [t for t in self.fcm_tokens if t.get('token') != token]
-        
+
         # Add new token
         token_data = {
             'token': token,
@@ -245,9 +254,25 @@ class User(AbstractBaseUser, PermissionsMixin):
             token_data['device_id'] = device_id
         if platform:
             token_data['platform'] = platform
-            
+
         self.fcm_tokens.append(token_data)
         self.save(update_fields=['fcm_tokens'])
+
+    def detach_fcm_token_from_others(self, token):
+        """Remove `token` from every other user's `fcm_tokens`.
+
+        Called before attaching the token to `self` so a given FCM
+        registration token is never listed on more than one account at a
+        time (otherwise both accounts receive each other's pushes).
+        """
+        others = type(self).objects.exclude(pk=self.pk).filter(
+            fcm_tokens__contains=[{'token': token}]
+        )
+        for other in others:
+            other.fcm_tokens = [
+                t for t in other.fcm_tokens if t.get('token') != token
+            ]
+            other.save(update_fields=['fcm_tokens'])
     
     def remove_fcm_token(self, token):
         """Remove FCM token."""
@@ -294,3 +319,103 @@ class User(AbstractBaseUser, PermissionsMixin):
         """Check if user can see who liked them."""
         from subscriptions.utils import is_premium_user
         return is_premium_user(self)
+
+
+class Report(models.Model):
+    """
+    Signalement d'un utilisateur par un autre.
+    Tracke le statut du signalement et permet de notifier le reporter
+    quand une décision est prise.
+    """
+
+    STATUS_PENDING = 'pending'
+    STATUS_UNDER_REVIEW = 'under_review'
+    STATUS_RESOLVED = 'resolved'
+    STATUS_DISMISSED = 'dismissed'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, _('En attente')),
+        (STATUS_UNDER_REVIEW, _('En cours de traitement')),
+        (STATUS_RESOLVED, _('Résolu')),
+        (STATUS_DISMISSED, _('Rejeté')),
+    ]
+
+    REASON_INAPPROPRIATE = 'inappropriate'
+    REASON_HARASSMENT = 'harassment'
+    REASON_SCAM = 'scam'
+    REASON_OTHER = 'other'
+
+    REASON_CHOICES = [
+        (REASON_INAPPROPRIATE, _('Contenu inapproprié')),
+        (REASON_HARASSMENT, _('Harcèlement')),
+        (REASON_SCAM, _('Arnaque')),
+        (REASON_OTHER, _('Autre')),
+    ]
+
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        verbose_name=_('ID'),
+    )
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='reports_made',
+        verbose_name=_('Signaleur'),
+    )
+    reported_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='reports_received',
+        verbose_name=_('Utilisateur signalé'),
+    )
+    reason = models.CharField(
+        max_length=20,
+        choices=REASON_CHOICES,
+        verbose_name=_('Motif'),
+    )
+    description = models.TextField(
+        blank=True,
+        verbose_name=_('Description'),
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        verbose_name=_('Statut'),
+    )
+    resolution_notes = models.TextField(
+        blank=True,
+        verbose_name=_('Notes de résolution'),
+    )
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reports_resolved',
+        verbose_name=_('Résolu par'),
+    )
+    resolved_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_('Résolu le'),
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name=_('Créé le'),
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['reporter', '-created_at']),
+            models.Index(fields=['reported_user', '-created_at']),
+            models.Index(fields=['status']),
+        ]
+        verbose_name = _('Signalement')
+        verbose_name_plural = _('Signalements')
+
+    def __str__(self):
+        return f"Report {self.id} — {self.reporter} → {self.reported_user} ({self.status})"

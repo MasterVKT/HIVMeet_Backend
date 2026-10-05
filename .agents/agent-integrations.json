@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "scope": "backend",
+  "shared_registry": "../../../.agents/agent-integrations.json",
+  "canonical_skills": ".agents/skills",
+  "hosts": {
+    "codex": {"config": ".codex/hooks.json", "hook_launcher": ".agents/hooks/invoke-agent-hook.ps1", "status": "configured_needs_trust"},
+    "claude": {"config": ".claude/settings.json", "skill_adapters": ".claude/skills", "status": "configured_needs_trust"},
+    "cline": {"rules": ".clinerules/00-hivmeet-lifecycle.md", "skill_adapters": ".claude/skills", "status": "configured_needs_reload"},
+    "copilot": {"config": ".github/hooks/hivmeet-lifecycle.json", "instructions": ".github/copilot-instructions.md", "status": "configured_cli_unavailable"},
+    "vscode": {"config": ".vscode/hooks/hivmeet-lifecycle.json", "settings": ".vscode/settings.json", "status": "configured_needs_reload"}
+  },
+  "legacy": [
+    {"path": ".clinerules/hooks", "status": "preserved_unverified", "reason": "aucune exécution ne lui est attribuée par cette gouvernance"}
+  ]
+}

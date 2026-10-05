@@ -9,6 +9,7 @@ from django.db.models import Q
 from .models import Like, Match, Boost, InteractionHistory
 from profiles.models import Profile
 from profiles.serializers import PublicProfileSerializer
+from profiles.geography import distance_between
 from subscriptions.utils import is_premium_user, get_premium_limits
 
 User = get_user_model()
@@ -32,12 +33,20 @@ class MatchSerializer(serializers.ModelSerializer):
     """
     matched_user = serializers.SerializerMethodField()
     unread_count_for_me = serializers.SerializerMethodField()
+    access_level = serializers.SerializerMethodField()
+    can_view_profile = serializers.SerializerMethodField()
+    can_send_messages = serializers.SerializerMethodField()
+    free_messages_remaining = serializers.SerializerMethodField()
+    access_locked_reason = serializers.SerializerMethodField()
+    is_new = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
         fields = [
             'id', 'matched_user', 'created_at',
-            'unread_count_for_me'
+            'unread_count_for_me', 'access_level', 'can_view_profile',
+            'can_send_messages', 'free_messages_remaining',
+            'access_locked_reason', 'is_new',
         ]
         read_only_fields = ['id', 'created_at']
 
@@ -45,7 +54,26 @@ class MatchSerializer(serializers.ModelSerializer):
         """Get the other user in the match."""
         request = self.context.get('request')
         if request and request.user:
+            from .free_access import FreeMatchAccessService
+
             other_user = obj.user2 if obj.user1 == request.user else obj.user1
+            access = FreeMatchAccessService.state_for(obj, request.user)
+            # A locked match can remain in the list but must not leak the
+            # counterpart's profile or location before both tokens exist.
+            if not access['can_view_profile']:
+                return {
+                    'id': str(other_user.id),
+                    'user_id': str(other_user.id),
+                    'display_name': _('Match verrouillÃ©'),
+                    'age': 0,
+                    'bio': '',
+                    'city': '',
+                    'country': '',
+                    'interests': [],
+                    'relationship_types_sought': [],
+                    'photos': [],
+                    'is_locked': True,
+                }
             from profiles.serializers import PublicProfileSerializer
             return PublicProfileSerializer(
                 other_user.profile,
@@ -54,9 +82,39 @@ class MatchSerializer(serializers.ModelSerializer):
         return None
 
     def get_unread_count_for_me(self, obj):
-        """Get unread message count for current user."""
-        # This would be implemented with messaging app
-        return 0
+        request = self.context.get('request')
+        return obj.get_unread_count(request.user) if request and request.user else 0
+
+    def _access(self, obj):
+        from .free_access import FreeMatchAccessService
+
+        request = self.context.get('request')
+        return (
+            FreeMatchAccessService.state_for(obj, request.user)
+            if request and request.user else
+            FreeMatchAccessService.state_for(obj, obj.user1)
+        )
+
+    def get_access_level(self, obj):
+        return self._access(obj)['access_level']
+
+    def get_can_view_profile(self, obj):
+        return self._access(obj)['can_view_profile']
+
+    def get_can_send_messages(self, obj):
+        return self._access(obj)['can_send_messages']
+
+    def get_free_messages_remaining(self, obj):
+        return self._access(obj)['free_messages_remaining']
+
+    def get_access_locked_reason(self, obj):
+        return self._access(obj)['access_locked_reason']
+
+    def get_is_new(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user:
+            return False
+        return not obj.is_seen_by(request.user)
 
 
 class RecommendedProfileSerializer(serializers.ModelSerializer):
@@ -81,24 +139,10 @@ class RecommendedProfileSerializer(serializers.ModelSerializer):
         ]
 
     def get_distance(self, obj):
-        """Calculate distance between users."""
+        """Return a privacy-safe precise or city-estimated distance."""
         request = self.context.get('request')
         if request and request.user and hasattr(request.user, 'profile'):
-            user_profile = request.user.profile
-            if user_profile.latitude and user_profile.longitude and obj.latitude and obj.longitude:
-                # Calculate distance using Haversine formula
-                from math import radians, cos, sin, asin, sqrt
-
-                lat1, lon1 = radians(user_profile.latitude), radians(user_profile.longitude)
-                lat2, lon2 = radians(obj.latitude), radians(obj.longitude)
-
-                dlon = lon2 - lon1
-                dlat = lat2 - lat1
-                a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-                c = 2 * asin(sqrt(a))
-                r = 6371  # Radius of earth in kilometers
-
-                return round(c * r, 1)
+            return distance_between(request.user.profile, obj).km
         return None
 
     def get_has_liked_you(self, obj):
@@ -226,6 +270,8 @@ class DiscoveryProfileSerializer(serializers.Serializer):
     is_verified = serializers.BooleanField(source='user.is_verified')
     is_online = serializers.SerializerMethodField()
     distance_km = serializers.SerializerMethodField()
+    distance_estimated = serializers.SerializerMethodField()
+    same_city = serializers.SerializerMethodField()
 
     def get_display_name(self, obj):
         """
@@ -249,54 +295,30 @@ class DiscoveryProfileSerializer(serializers.Serializer):
         """
         Get profile photo URLs or return a default avatar.
         Returns a list of photo URLs (strings, not objects).
-        Handles both absolute URLs and relative paths, converting them to absolute URLs.
+        Uses normalize_media_url for consistent URL normalization (LOG-05).
         """
-        from django.conf import settings
-        from rest_framework.request import Request
-        
+        from profiles.photo_storage import profile_photo_delivery_url
+
         photos = []
-        
+        request = self.context.get('request')
+
         # Get approved photos, ordered by priority
         approved_photos = obj.photos.filter(is_approved=True).order_by('order')
-        
+
         if approved_photos.exists():
-            # Return main photo URLs
             for photo in approved_photos:
-                if photo.photo_url:
-                    url = photo.photo_url.strip()
-                    
-                    # Check if it's already an absolute URL
-                    if url.startswith('http://') or url.startswith('https://'):
-                        photos.append(url)
-                    else:
-                        # Convert relative path to absolute URL using request context
-                        request = self.context.get('request')
-                        if request:
-                            # Build absolute URL using request
-                            if url.startswith('/'):
-                                # Already has leading slash
-                                absolute_url = request.build_absolute_uri(url)
-                            else:
-                                # Add /media/ prefix if not present
-                                media_path = f"/media/{url}" if not url.startswith('media/') else f"/{url}"
-                                absolute_url = request.build_absolute_uri(media_path)
-                            photos.append(absolute_url)
-                        else:
-                            # Fallback without request context
-                            if url.startswith('/'):
-                                photos.append(url)
-                            else:
-                                photos.append(f"/media/{url}" if not url.startswith('media/') else f"/{url}")
-        
+                normalized = profile_photo_delivery_url(photo, request)
+                if normalized:
+                    photos.append(normalized)
+
         # If no photos, use Gravatar as default avatar
         if not photos:
             import hashlib
             user = obj.user
-            # Create a Gravatar URL using email hash
             email_hash = hashlib.md5(user.email.lower().encode()).hexdigest()
             gravatar_url = f"https://www.gravatar.com/avatar/{email_hash}?d=identicon&s=400"
             photos.append(gravatar_url)
-        
+
         return photos
 
     def get_is_online(self, obj):
@@ -305,9 +327,26 @@ class DiscoveryProfileSerializer(serializers.Serializer):
         return (timezone.now() - obj.user.last_active).total_seconds() < 300
 
     def get_distance_km(self, obj):
-        """Get distance from current user."""
-        # This would be calculated in the service
-        return getattr(obj, 'distance_km', None)
+        result = self._distance(obj)
+        return result.km if result else None
+
+    def _distance(self, obj):
+        request = self.context.get('request')
+        if not request or not hasattr(request.user, 'profile'):
+            return None
+        cache = self.context.setdefault('_discovery_distance_cache', {})
+        key = str(obj.pk)
+        if key not in cache:
+            cache[key] = distance_between(request.user.profile, obj)
+        return cache[key]
+
+    def get_distance_estimated(self, obj):
+        result = self._distance(obj)
+        return result.estimated if result else None
+
+    def get_same_city(self, obj):
+        result = self._distance(obj)
+        return result.same_city if result else False
 
 
 class LikeActionSerializer(serializers.Serializer):
@@ -374,9 +413,13 @@ class LikesReceivedSerializer(serializers.Serializer):
         return obj.from_user.age
 
     def get_main_photo_url(self, obj):
-        """Get main photo URL."""
+        """Get main photo URL (normalized — LOG-05)."""
+        from profiles.photo_storage import profile_photo_delivery_url
         photo = obj.from_user.profile.photos.filter(is_main=True).first()
-        return photo.thumbnail_url if photo else None
+        if not photo:
+            return None
+        request = self.context.get('request')
+        return profile_photo_delivery_url(photo, request, thumbnail=True)
 
 
 class SearchFilterSerializer(serializers.Serializer):
@@ -447,6 +490,10 @@ class SearchFilterSerializer(serializers.Serializer):
                 errors['genders'] = _('Invalid gender values: %(values)s') % {
                     'values': ', '.join(invalid_genders)
                 }
+            elif len(set(normalized_genders)) > 1:
+                errors['genders'] = _(
+                    'Choose one gender or leave the list empty for everyone.'
+                )
             elif 'genders' not in errors:
                 # Deduplicate while preserving deterministic order
                 data['genders'] = list(dict.fromkeys(normalized_genders))
@@ -528,6 +575,7 @@ class InteractionHistorySerializer(serializers.Serializer):
     passed_at = serializers.DateTimeField(source='created_at', read_only=True)
     is_matched = serializers.SerializerMethodField()
     match_id = serializers.SerializerMethodField()
+    can_revoke = serializers.SerializerMethodField()
     can_rematch = serializers.SerializerMethodField()
     can_reconsider = serializers.SerializerMethodField()
     
@@ -545,30 +593,30 @@ class InteractionHistorySerializer(serializers.Serializer):
         if obj.interaction_type == InteractionHistory.DISLIKE:
             return False
         
-        request = self.context.get('request')
-        if request and request.user:
-            match = Match.objects.filter(
-                Q(user1=request.user, user2=obj.target_user) |
-                Q(user1=obj.target_user, user2=request.user),
-                status=Match.ACTIVE
-            ).first()
-            return bool(match)
-        return False
+        return self._active_match_id(obj) is not None
     
     def get_match_id(self, obj):
         """Get match ID if exists."""
         if obj.interaction_type == InteractionHistory.DISLIKE:
             return None
         
+        match_id = self._active_match_id(obj)
+        return str(match_id) if match_id else None
+
+    def _active_match_id(self, obj):
+        """Use the batched context prepared by the history view when present."""
+        active_matches = self.context.get('active_match_ids_by_target')
+        if active_matches is not None:
+            return active_matches.get(obj.target_user_id)
+
         request = self.context.get('request')
-        if request and request.user:
-            match = Match.objects.filter(
-                Q(user1=request.user, user2=obj.target_user) |
-                Q(user1=obj.target_user, user2=request.user),
-                status=Match.ACTIVE
-            ).first()
-            return str(match.id) if match else None
-        return None
+        if not request or not request.user:
+            return None
+        return Match.objects.filter(
+            Q(user1=request.user, user2=obj.target_user) |
+            Q(user1=obj.target_user, user2=request.user),
+            status=Match.ACTIVE,
+        ).values_list('id', flat=True).first()
     
     def get_can_rematch(self, obj):
         """Check if user can rematch (for likes)."""
@@ -581,6 +629,61 @@ class InteractionHistorySerializer(serializers.Serializer):
     def get_can_reconsider(self, obj):
         """Check if user can reconsider (for dislikes)."""
         return not obj.is_revoked
+
+    def get_can_revoke(self, obj):
+        """A matched like must be removed through the match lifecycle."""
+        if obj.is_revoked:
+            return False
+        if obj.interaction_type in (InteractionHistory.LIKE, InteractionHistory.SUPER_LIKE):
+            return not self.get_is_matched(obj)
+        return True
+
+
+class BulkRevokeInteractionsSerializer(serializers.Serializer):
+    """Strict input contract for atomic history revocation."""
+
+    HISTORY_LIKES = 'likes'
+    HISTORY_PASSES = 'passes'
+    HISTORY_CHOICES = ((HISTORY_LIKES, HISTORY_LIKES), (HISTORY_PASSES, HISTORY_PASSES))
+    MATCH_ALL = 'all'
+    MATCH_MATCHED = 'matched'
+    MATCH_UNMATCHED = 'unmatched'
+    MATCH_CHOICES = (
+        (MATCH_ALL, MATCH_ALL),
+        (MATCH_MATCHED, MATCH_MATCHED),
+        (MATCH_UNMATCHED, MATCH_UNMATCHED),
+    )
+
+    history_type = serializers.ChoiceField(choices=HISTORY_CHOICES)
+    interaction_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, allow_empty=False, max_length=100
+    )
+    select_all = serializers.BooleanField(default=False)
+    q = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    match_state = serializers.ChoiceField(choices=MATCH_CHOICES, default=MATCH_ALL)
+    include_revoked = serializers.BooleanField(default=False)
+
+    def validate(self, attrs):
+        select_all = attrs['select_all']
+        interaction_ids = attrs.get('interaction_ids', [])
+        if select_all == bool(interaction_ids):
+            raise serializers.ValidationError(
+                'Provide interaction_ids or select_all=true, but not both.'
+            )
+        return attrs
+
+
+class MarkMatchesSeenSerializer(serializers.Serializer):
+    """A missing list means all active matches of the authenticated user."""
+
+    match_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, allow_empty=True, max_length=100
+    )
+
+    def validate_match_ids(self, value):
+        if len(set(value)) != len(value):
+            raise serializers.ValidationError('Each match can be supplied only once.')
+        return value
 
 
 class InteractionStatsSerializer(serializers.Serializer):

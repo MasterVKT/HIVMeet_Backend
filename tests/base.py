@@ -34,7 +34,7 @@ class BaseTestCase(TestCase):
             'display_name': self.faker.name(),
             'password': 'testpass123',
             'birth_date': self.faker.date_of_birth(minimum_age=18, maximum_age=80),
-            'is_email_verified': True,
+            'email_verified': True,
         }
         defaults.update(kwargs)
         return User.objects.create_user(**defaults)
@@ -70,7 +70,7 @@ class APIBaseTestCase(APITestCase):
             'display_name': self.faker.name(),
             'password': 'testpass123',
             'birth_date': self.faker.date_of_birth(minimum_age=18, maximum_age=80),
-            'is_email_verified': True,
+            'email_verified': True,
         }
         defaults.update(kwargs)
         return User.objects.create_user(**defaults)
@@ -90,6 +90,18 @@ class APIBaseTestCase(APITestCase):
         self.authenticate(user)
         return user
 
+    def create_image_file(self, name='test.jpg', size=(100, 100)):
+        """Create an in-memory image accepted by multipart API endpoints."""
+        file = io.BytesIO()
+        image = Image.new('RGB', size)
+        image.save(file, 'JPEG')
+        file.seek(0)
+        return SimpleUploadedFile(
+            name,
+            file.getvalue(),
+            content_type='image/jpeg',
+        )
+
 
 class TransactionalTestCase(TransactionTestCase):
     """Base transactional test case for tests requiring transactions."""
@@ -107,10 +119,12 @@ class UserFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = User
     
-    email = factory.Faker('email')
+    # Faker can emit duplicates in large load fixtures; a deterministic
+    # sequence keeps the database uniqueness contract stable.
+    email = factory.Sequence(lambda n: f'user-{n}@example.test')
     display_name = factory.Faker('name')
     birth_date = factory.Faker('date_of_birth', minimum_age=18, maximum_age=80)
-    is_email_verified = True
+    email_verified = True
     is_active = True
     
     @factory.post_generation
@@ -119,6 +133,8 @@ class UserFactory(factory.django.DjangoModelFactory):
             obj.set_password(extracted)
         else:
             obj.set_password('testpass123')
+        if create:
+            obj.save(update_fields=['password'])
 
 
 class ProfileFactory(factory.django.DjangoModelFactory):
@@ -126,10 +142,28 @@ class ProfileFactory(factory.django.DjangoModelFactory):
     
     class Meta:
         model = 'profiles.Profile'
+
+    @classmethod
+    def _create(cls, model_class, *args, **kwargs):
+        """Reuse the profile created by the user post-save signal.
+
+        A Profile is a strict one-to-one extension of User and production
+        signals create it immediately.  Test factories must therefore update
+        that canonical row instead of trying to insert a duplicate.
+        """
+        user = kwargs.pop('user')
+        profile, _ = model_class.objects.update_or_create(
+            user=user,
+            defaults=kwargs,
+        )
+        return profile
     
     user = factory.SubFactory(UserFactory)
     bio = factory.Faker('text', max_nb_chars=500)
-    gender = factory.Faker('random_element', elements=['male', 'female', 'non_binary'])
+    # Identity gender is intentionally binary for new accounts.  Fixtures
+    # must obey the same invariant as registration instead of manufacturing
+    # legacy-only values that production can no longer accept.
+    gender = factory.Faker('random_element', elements=['male', 'female'])
     interests = factory.List([factory.Faker('word') for _ in range(5)])
     city = factory.Faker('city')
     country = factory.Faker('country')
@@ -171,13 +205,10 @@ class SubscriptionFactory(factory.django.DjangoModelFactory):
 
 
 class ConversationFactory(factory.django.DjangoModelFactory):
-    """Factory for creating Conversation instances."""
+    """Factory for the Match model that owns a conversation."""
     
     class Meta:
-        model = 'messaging.Conversation'
-    
-    @factory.post_generation
-    def participants(self, create, extracted, **kwargs):
-        if create and extracted:
-            for participant in extracted:
-                self.participants.add(participant)
+        model = 'matching.Match'
+
+    user1 = factory.SubFactory(UserFactory)
+    user2 = factory.SubFactory(UserFactory)

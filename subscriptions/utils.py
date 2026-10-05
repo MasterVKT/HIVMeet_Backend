@@ -9,33 +9,69 @@ from rest_framework.response import Response
 from rest_framework import status
 
 
+PREMIUM_STATUS_CACHE_TTL = 300
+
+
+def premium_status_cache_key(user_id):
+    """Single owner of the premium-status cache key.
+
+    Every reader and every invalidator must go through this helper: two call
+    sites computing the key independently is how the previous
+    ``PremiumFeatureService.check_premium_status`` ended up caching a
+    *different* notion of "premium" under the same key.
+    """
+    return f"user_premium_status_{user_id}"
+
+
+def invalidate_premium_status_cache(user):
+    """Drop a user's cached premium status.
+
+    Must be called on **every** transition that can change premium access —
+    purchase, renewal, cancellation, expiry — otherwise a revoked user keeps
+    paid features until the TTL lapses.
+    """
+    if user is None:
+        return
+    user_id = getattr(user, 'id', user)
+    if user_id is None:
+        return
+    cache.delete(premium_status_cache_key(user_id))
+
+
 def is_premium_user(user):
     """
     Check if a user has an active premium subscription.
-    
+
     Args:
         user: User instance
-    
+
     Returns:
         bool: True if user has active premium subscription
     """
     if not user or not user.is_authenticated:
         return False
-    
+
+    # Effective Premium rights always require active KYC. The subscription
+    # remains historical and cancellable, but never grants a social benefit
+    # while KYC is inactive.
+    from profiles.kyc import has_active_kyc
+    if not has_active_kyc(user):
+        return False
+
     # Check cache first
-    cache_key = f"user_premium_status_{user.id}"
+    cache_key = premium_status_cache_key(user.id)
     cached_status = cache.get(cache_key)
     if cached_status is not None:
         return cached_status
-    
+
     # Check database
     is_premium = False
     if user.is_premium and user.premium_until:
         is_premium = user.premium_until > timezone.now()
-    
+
     # Cache result for 5 minutes
-    cache.set(cache_key, is_premium, 300)
-    
+    cache.set(cache_key, is_premium, PREMIUM_STATUS_CACHE_TTL)
+
     return is_premium
 
 

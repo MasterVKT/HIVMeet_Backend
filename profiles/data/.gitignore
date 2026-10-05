@@ -1,0 +1,6 @@
+# City archives are release inputs. They are validated and imported through
+# sync_geonames_catalog; do not commit partial downloads.
+*.zip
+*.tmp
+!countryInfo.txt
+!territories_fr.json

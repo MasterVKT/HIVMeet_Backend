@@ -146,11 +146,13 @@ class FeedPostAuthorSerializer(serializers.Serializer):
     is_verified = serializers.BooleanField()
     
     def get_profile_photo_url(self, obj):
-        """Get profile photo URL."""
+        """Get profile photo URL (normalized — LOG-05)."""
         if hasattr(obj, 'profile') and obj.profile.photos.exists():
             main_photo = obj.profile.photos.filter(is_main=True).first()
             if main_photo:
-                return main_photo.thumbnail_url
+                from profiles.photo_storage import profile_photo_delivery_url
+                request = self.context.get('request')
+                return profile_photo_delivery_url(main_photo, request, thumbnail=True)
         return None
 
 

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "python3 .agents/hooks/lifecycle_hook.py --event prompt --scope backend --host copilot --map .agents/project-map.json",
+        "powershell": "powershell -NoProfile -ExecutionPolicy Bypass -File .agents/hooks/invoke-agent-hook.ps1 -Event prompt -Scope backend -HostName copilot",
+        "cwd": ".",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}

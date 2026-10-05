@@ -1,0 +1,26 @@
+============================================================
+CORRECTION DES GENRES
+============================================================
+Profils a traiter: 14
+
+OK: Target User -> male
+OK: Alex -> male
+OK: Emma -> female
+DEFAULT: Jordan (jordan) -> male
+OK: Admin HIVMeet -> male
+DEFAULT: Riley (riley) -> male
+OK: Seeker -> male
+OK: Target Exact Match -> male
+OK: Target All Types -> male
+OK: Target Null Type -> male
+OK: XP Admin -> male
+OK: Test User -> male
+DEFAULT:  () -> male
+DEFAULT:  () -> male
+
+Corriges: 14
+
+STATS FINALES:
+  female: 15
+  male: 52
+Non male/female restants: 0

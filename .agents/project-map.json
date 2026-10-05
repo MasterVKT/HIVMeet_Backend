@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "project_id": "hivmeet",
+  "project": "hivmeet",
+  "scope": "backend",
+  "self_root": "..",
+  "shared_governance": "../../../.agents",
+  "peer_scope": "frontend",
+  "peer_root": "../../../hivmeet",
+  "peer_anchors": ["pubspec.yaml", "lib", ".agents/project-map.json"],
+  "anchors": ["manage.py", "hivmeet_backend/settings.py", ".agents/project-map.json"]
+}

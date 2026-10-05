@@ -1,0 +1,1416 @@
+Creating test database for alias 'default'...
+Firebase Admin SDK initialized successfully
+Profile created for user: <email:03f276fce4c9>
+Verification record created for user: <email:03f276fce4c9>
+Profile created for user: <email:99a97560cfec>
+Verification record created for user: <email:99a97560cfec>
+Profile created for user: <email:271673afe2c4>
+Verification record created for user: <email:271673afe2c4>
+Profile created for user: <email:0fb62fdebfc3>
+Verification record created for user: <email:0fb62fdebfc3>
+.Profile created for user: <email:03f276fce4c9>
+Verification record created for user: <email:03f276fce4c9>
+Profile created for user: <email:90a4dcfc9d03>
+Verification record created for user: <email:90a4dcfc9d03>
+.Profile created for user: <email:03f276fce4c9>
+Verification record created for user: <email:03f276fce4c9>
+Profile created for user: <email:b204e185ac52>
+Verification record created for user: <email:b204e185ac52>
+[DAILY_LIKES] BEFORE_LIKE - is_premium=False, daily_likes_remaining=10, likes_used_today=0, super_likes_remaining=0, daily_likes_limit=10
+[DAILY_LIKES] AFTER_LIKE - is_premium=False, daily_likes_remaining=9, likes_used_today=1, super_likes_remaining=0, daily_likes_limit=10
+Like successful; remaining=9
+.Profile created for user: <email:03f276fce4c9>
+Verification record created for user: <email:03f276fce4c9>
+Profile created for user: <email:70e54ed0473c>
+Verification record created for user: <email:70e54ed0473c>
+.Profile created for user: <email:03f276fce4c9>
+Verification record created for user: <email:03f276fce4c9>
+.Profile created for user: <email:03f276fce4c9>
+Verification record created for user: <email:03f276fce4c9>
+Profile created for user: <email:99a97560cfec>
+Verification record created for user: <email:99a97560cfec>
+Profile created for user: <email:271673afe2c4>
+Verification record created for user: <email:271673afe2c4>
+Profile created for user: <email:0fb62fdebfc3>
+Verification record created for user: <email:0fb62fdebfc3>
+Profile created for user: <email:2447ad085025>
+Verification record created for user: <email:2447ad085025>
+Profile created for user: <email:88224f2e9830>
+Verification record created for user: <email:88224f2e9830>
+Profile created for user: <email:941c3dadccac>
+Verification record created for user: <email:941c3dadccac>
+Profile created for user: <email:a79372ec918e>
+Verification record created for user: <email:a79372ec918e>
+Profile created for user: <email:215510368a58>
+Verification record created for user: <email:215510368a58>
+Profile created for user: <email:d87af0deb537>
+Verification record created for user: <email:d87af0deb537>
+Profile created for user: <email:6642f493039e>
+Verification record created for user: <email:6642f493039e>
+Profile created for user: <email:f066694d957d>
+Verification record created for user: <email:f066694d957d>
+.Profile created for user: <email:03f276fce4c9>
+Verification record created for user: <email:03f276fce4c9>
+Interaction status returned; daily_likes_remaining=10
+.Profile created for user: <email:b74e22c873f8>
+Verification record created for user: <email:b74e22c873f8>
+Profile created for user: <email:7fc1212e7066>
+Verification record created for user: <email:7fc1212e7066>
+.Profile created for user: <email:b61aaa115007>
+Verification record created for user: <email:b61aaa115007>
+Profile created for user: <email:6e59e271e79d>
+Verification record created for user: <email:6e59e271e79d>
+.Profile created for user: <email:408e2d39d78a>
+Verification record created for user: <email:408e2d39d78a>
+Profile created for user: <email:d4743a1a027c>
+Verification record created for user: <email:d4743a1a027c>
+.Profile created for user: <email:d7f896cc1d31>
+Verification record created for user: <email:d7f896cc1d31>
+Premium status activated
+Profile created for user: <email:477c41ffd82f>
+Verification record created for user: <email:477c41ffd82f>
+Profile created for user: <email:0e353670c895>
+Verification record created for user: <email:0e353670c895>
+Profile created for user: <email:cd4bc846f6f7>
+Verification record created for user: <email:cd4bc846f6f7>
+Profile created for user: <email:672e5353a9cd>
+Verification record created for user: <email:672e5353a9cd>
+Profile created for user: <email:01e001fd6806>
+Verification record created for user: <email:01e001fd6806>
+Premium status activated
+Premium super-like counter synchronized
+Premium status activated
+Premium super-like counter synchronized
+Premium status activated
+Premium super-like counter synchronized
+Premium status activated
+Premium super-like counter synchronized
+Premium status activated
+Premium super-like counter synchronized
+.Profile created for user: <email:2ed7b83bb433>
+Verification record created for user: <email:2ed7b83bb433>
+Profile created for user: <email:502fd1989ecc>
+Verification record created for user: <email:502fd1989ecc>
+Profile created for user: <email:36283f55d3f2>
+Verification record created for user: <email:36283f55d3f2>
+Profile created for user: <email:77c2a6bfb942>
+Verification record created for user: <email:77c2a6bfb942>
+Profile created for user: <email:1c2a144b6268>
+Verification record created for user: <email:1c2a144b6268>
+Recommendation request: limit=100 offset=0
+\U0001f6ab Excluding 1 profiles:
+   - Active interactions (is_revoked=False): 0
+   - Legacy likes: 0
+   - Legacy dislikes: 0
+   - Blocked users: 0
+   - Blocked by: 0
+\U0001f4ca After base filters (active, email_verified, not hidden, discovery enabled): 4 profiles
+After mutual age compatibility: 4 profiles
+After age filter: 2 profiles
+After gender filter: 2 profiles
+After mutual gender compatibility: 2 profiles
+After distance filter: 2 profiles
+\U0001f4ca Total profiles after all filters: 2
+\u2705 Final result after pagination [0:100]: 2 profiles
+.Profile created for user: <email:421c3fcb3702>
+Verification record created for user: <email:421c3fcb3702>
+Profile created for user: <email:84c38ba65e5f>
+Verification record created for user: <email:84c38ba65e5f>
+Profile created for user: <email:9ce19ac12fcc>
+Verification record created for user: <email:9ce19ac12fcc>
+Recommendation request: limit=100 offset=0
+\U0001f6ab Excluding 1 profiles:
+   - Active interactions (is_revoked=False): 0
+   - Legacy likes: 0
+   - Legacy dislikes: 0
+   - Blocked users: 0
+   - Blocked by: 0
+\U0001f4ca After base filters (active, email_verified, not hidden, discovery enabled): 2 profiles
+After mutual age compatibility: 2 profiles
+After age filter: 2 profiles
+After gender filter: 2 profiles
+After mutual gender compatibility: 2 profiles
+After distance filter: 1 profiles
+\U0001f4ca Total profiles after all filters: 1
+\u2705 Final result after pagination [0:100]: 1 profiles
+.Profile created for user: <email:073f415cd3ad>
+Verification record created for user: <email:073f415cd3ad>
+Profile created for user: <email:95620c7f68be>
+Verification record created for user: <email:95620c7f68be>
+Profile created for user: <email:ff69d190c73d>
+Verification record created for user: <email:ff69d190c73d>
+Profile created for user: <email:dffc3ba1b835>
+Verification record created for user: <email:dffc3ba1b835>
+Profile created for user: <email:f882423398ee>
+Verification record created for user: <email:f882423398ee>
+Recommendation request: limit=100 offset=0
+\U0001f6ab Excluding 4 profiles:
+   - Active interactions (is_revoked=False): 1
+   - Legacy likes: 0
+   - Legacy dislikes: 0
+   - Blocked users: 1
+   - Blocked by: 1
+\U0001f4ca After base filters (active, email_verified, not hidden, discovery enabled): 1 profiles
+After mutual age compatibility: 1 profiles
+After age filter: 1 profiles
+After gender filter: 1 profiles
+After mutual gender compatibility: 1 profiles
+After distance filter: 1 profiles
+\U0001f4ca Total profiles after all filters: 1
+\u2705 Final result after pagination [0:100]: 1 profiles
+.Profile created for user: <email:d755f80dad83>
+Verification record created for user: <email:d755f80dad83>
+Updating discovery filters
+Invalid discovery filter data
+Bad Request: /api/v1/discovery/filters
+.Profile created for user: <email:b290c0cef5f6>
+Verification record created for user: <email:b290c0cef5f6>
+Updating discovery filters
+Discovery filters updated successfully
+.Profile created for user: <email:494a5e9c5008>
+Verification record created for user: <email:494a5e9c5008>
+Profile created for user: <email:56805888ba9e>
+Verification record created for user: <email:56805888ba9e>
+Profile created for user: <email:18e82b92f079>
+Verification record created for user: <email:18e82b92f079>
+Recommendation request: limit=100 offset=0
+\U0001f6ab Excluding 1 profiles:
+   - Active interactions (is_revoked=False): 0
+   - Legacy likes: 0
+   - Legacy dislikes: 0
+   - Blocked users: 0
+   - Blocked by: 0
+\U0001f4ca After base filters (active, email_verified, not hidden, discovery enabled): 2 profiles
+After mutual age compatibility: 2 profiles
+After age filter: 2 profiles
+After gender filter: 2 profiles
+After mutual gender compatibility: 1 profiles
+After distance filter: 1 profiles
+\U0001f4ca Total profiles after all filters: 1
+\u2705 Final result after pagination [0:100]: 1 profiles
+.Profile created for user: <email:bf7c47743e06>
+Verification record created for user: <email:bf7c47743e06>
+Profile created for user: <email:8235bfe1d284>
+Verification record created for user: <email:8235bfe1d284>
+Profile created for user: <email:e1a0064980be>
+Verification record created for user: <email:e1a0064980be>
+Profile created for user: <email:fe71c234c408>
+Verification record created for user: <email:fe71c234c408>
+Recommendation request: limit=100 offset=0
+\U0001f6ab Excluding 1 profiles:
+   - Active interactions (is_revoked=False): 0
+   - Legacy likes: 0
+   - Legacy dislikes: 0
+   - Blocked users: 0
+   - Blocked by: 0
+\U0001f4ca After base filters (active, email_verified, not hidden, discovery enabled): 3 profiles
+After mutual age compatibility: 3 profiles
+After age filter: 3 profiles
+After gender filter: 3 profiles
+After mutual gender compatibility: 3 profiles
+After relationship type filter: 2 profiles
+After distance filter: 2 profiles
+\U0001f4ca Total profiles after all filters: 2
+\u2705 Final result after pagination [0:100]: 2 profiles
+.Profile created for user: <email:321d159e9b79>
+Verification record created for user: <email:321d159e9b79>
+Profile created for user: <email:b85e53dad60d>
+Verification record created for user: <email:b85e53dad60d>
+Profile created for user: <email:e597d0fdb08d>
+Verification record created for user: <email:e597d0fdb08d>
+Profile created for user: <email:4a2c85445f11>
+Verification record created for user: <email:4a2c85445f11>
+Recommendation request: limit=100 offset=0
+\U0001f6ab Excluding 1 profiles:
+   - Active interactions (is_revoked=False): 0
+   - Legacy likes: 0
+   - Legacy dislikes: 0
+   - Blocked users: 0
+   - Blocked by: 0
+\U0001f4ca After base filters (active, email_verified, not hidden, discovery enabled): 3 profiles
+After mutual age compatibility: 3 profiles
+After age filter: 3 profiles
+After gender filter: 3 profiles
+After mutual gender compatibility: 3 profiles
+After distance filter: 3 profiles
+   After verified_only filter: 2 profiles \u26a0\ufe0f
+   After online_only filter (last 5 min): 1 profiles \u26a0\ufe0f
+\U0001f4ca Total profiles after all filters: 1
+\u2705 Final result after pagination [0:100]: 1 profiles
+.Profile created for user: <email:26b8c07c12e2>
+Verification record created for user: <email:26b8c07c12e2>
+Profile created for user: <email:43f8262ac373>
+Verification record created for user: <email:43f8262ac373>
+.Profile created for user: <email:26b8c07c12e2>
+Verification record created for user: <email:26b8c07c12e2>
+Profile created for user: <email:43f8262ac373>
+Verification record created for user: <email:43f8262ac373>
+API request rejected: type=PermissionDenied code=permission_denied status=403 view=api:profiles:user-profile method=GET
+Forbidden: /api/v1/user-profiles/<id:c666e8fc718a>/
+.Profile created for user: <email:26b8c07c12e2>
+Verification record created for user: <email:26b8c07c12e2>
+Profile created for user: <email:43f8262ac373>
+Verification record created for user: <email:43f8262ac373>
+.Profile created for user: <email:26b8c07c12e2>
+Verification record created for user: <email:26b8c07c12e2>
+Profile created for user: <email:43f8262ac373>
+Verification record created for user: <email:43f8262ac373>
+Not Found: /api/v1/matches/likes-received/reveal/
+.Profile created for user: <email:26b8c07c12e2>
+Verification record created for user: <email:26b8c07c12e2>
+Profile created for user: <email:43f8262ac373>
+Verification record created for user: <email:43f8262ac373>
+.Profile created for user: <email:26b8c07c12e2>
+Verification record created for user: <email:26b8c07c12e2>
+Profile created for user: <email:43f8262ac373>
+Verification record created for user: <email:43f8262ac373>
+.Profile created for user: <email:26b8c07c12e2>
+Verification record created for user: <email:26b8c07c12e2>
+Profile created for user: <email:43f8262ac373>
+Verification record created for user: <email:43f8262ac373>
+Forbidden: /api/v1/conversations/<id:903c5b32720d>/messages/
+.Profile created for user: <email:26b8c07c12e2>
+Verification record created for user: <email:26b8c07c12e2>
+Profile created for user: <email:43f8262ac373>
+Verification record created for user: <email:43f8262ac373>
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:6f2aa70164dc>
+Verification record created for user: <email:6f2aa70164dc>
+Profile created for user: <email:d9e4f6f336b4>
+Verification record created for user: <email:d9e4f6f336b4>
+Conflict: /api/v1/discovery/interactions/revoke-bulk
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:6f2aa70164dc>
+Verification record created for user: <email:6f2aa70164dc>
+Profile created for user: <email:d9e4f6f336b4>
+Verification record created for user: <email:d9e4f6f336b4>
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:6f2aa70164dc>
+Verification record created for user: <email:6f2aa70164dc>
+Profile created for user: <email:d9e4f6f336b4>
+Verification record created for user: <email:d9e4f6f336b4>
+Not Found: /api/v1/matches/seen/
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:6f2aa70164dc>
+Verification record created for user: <email:6f2aa70164dc>
+Profile created for user: <email:d9e4f6f336b4>
+Verification record created for user: <email:d9e4f6f336b4>
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:6f2aa70164dc>
+Verification record created for user: <email:6f2aa70164dc>
+Profile created for user: <email:d9e4f6f336b4>
+Verification record created for user: <email:d9e4f6f336b4>
+.Profile created for user: <email:efcbe0496b4a>
+Verification record created for user: <email:efcbe0496b4a>
+Profile created for user: <email:b877e8703a0e>
+Verification record created for user: <email:b877e8703a0e>
+Dislike successful; remaining=9
+.Profile created for user: <email:efcbe0496b4a>
+Verification record created for user: <email:efcbe0496b4a>
+Profile created for user: <email:b877e8703a0e>
+Verification record created for user: <email:b877e8703a0e>
+Dislike successful; remaining=9
+.Profile created for user: <email:efcbe0496b4a>
+Verification record created for user: <email:efcbe0496b4a>
+Profile created for user: <email:b877e8703a0e>
+Verification record created for user: <email:b877e8703a0e>
+[DAILY_LIKES] BEFORE_LIKE - is_premium=False, daily_likes_remaining=9, likes_used_today=1, super_likes_remaining=0, daily_likes_limit=10
+[DAILY_LIKES] AFTER_LIKE - is_premium=False, daily_likes_remaining=9, likes_used_today=1, super_likes_remaining=0, daily_likes_limit=10
+Like successful; remaining=9
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:b0431fe80744>
+Verification record created for user: <email:b0431fe80744>
+Profile created for user: <email:211c3c5299ae>
+Verification record created for user: <email:211c3c5299ae>
+API request rejected: type=Http404 code=request_error status=404 view=api:profiles:user-profile method=GET
+Not Found: /api/v1/user-profiles/<id:7aefe5e30040>/
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:b0431fe80744>
+Verification record created for user: <email:b0431fe80744>
+Profile created for user: <email:211c3c5299ae>
+Verification record created for user: <email:211c3c5299ae>
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:b0431fe80744>
+Verification record created for user: <email:b0431fe80744>
+Profile created for user: <email:211c3c5299ae>
+Verification record created for user: <email:211c3c5299ae>
+Conflict: /api/v1/discovery/interactions/<id:8f61f58d8973>/revoke
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:b0431fe80744>
+Verification record created for user: <email:b0431fe80744>
+Profile created for user: <email:211c3c5299ae>
+Verification record created for user: <email:211c3c5299ae>
+Conflict: /api/v1/discovery/interactions/rewind
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:b0431fe80744>
+Verification record created for user: <email:b0431fe80744>
+Profile created for user: <email:211c3c5299ae>
+Verification record created for user: <email:211c3c5299ae>
+Not Found: /api/v1/matches/<id:ec81343abb90>
+.Profile created for user: <email:b2096dbc5111>
+Verification record created for user: <email:b2096dbc5111>
+Profile created for user: <email:b0431fe80744>
+Verification record created for user: <email:b0431fe80744>
+Profile created for user: <email:211c3c5299ae>
+Verification record created for user: <email:211c3c5299ae>
+Match removed by a participant; match_id=<id:3398fb2475ce>
+Not Found: /api/v1/conversations/<id:3398fb2475ce>/messages/
+.Profile created for user: <email:69ac4be8729b>
+Verification record created for user: <email:69ac4be8729b>
+Profile created for user: <email:27999a62c422>
+Verification record created for user: <email:27999a62c422>
+Profile created for user: <email:f8534d3f8f09>
+Verification record created for user: <email:f8534d3f8f09>
+.Profile created for user: <email:69ac4be8729b>
+Verification record created for user: <email:69ac4be8729b>
+Profile created for user: <email:27999a62c422>
+Verification record created for user: <email:27999a62c422>
+Profile created for user: <email:f8534d3f8f09>
+Verification record created for user: <email:f8534d3f8f09>
+.Profile created for user: <email:69ac4be8729b>
+Verification record created for user: <email:69ac4be8729b>
+Profile created for user: <email:27999a62c422>
+Verification record created for user: <email:27999a62c422>
+Profile created for user: <email:f8534d3f8f09>
+Verification record created for user: <email:f8534d3f8f09>
+Bad Request: /api/v1/conversations/
+Bad Request: /api/v1/conversations/
+Bad Request: /api/v1/conversations/
+Bad Request: /api/v1/conversations/<id:ef4e148fb49c>/messages/
+Bad Request: /api/v1/conversations/<id:ef4e148fb49c>/messages/
+Bad Request: /api/v1/conversations/<id:ef4e148fb49c>/messages/
+.Profile created for user: <email:69ac4be8729b>
+Verification record created for user: <email:69ac4be8729b>
+Profile created for user: <email:27999a62c422>
+Verification record created for user: <email:27999a62c422>
+Profile created for user: <email:f8534d3f8f09>
+Verification record created for user: <email:f8534d3f8f09>
+No hostname was supplied. Reverting to default 'localhost'
+No FCM token: subject=<redacted>
+Read receipt push dispatch failed for match_id=<id:55e3f7c7555b>
+.Profile created for user: <email:69ac4be8729b>
+Verification record created for user: <email:69ac4be8729b>
+Profile created for user: <email:27999a62c422>
+Verification record created for user: <email:27999a62c422>
+Profile created for user: <email:f8534d3f8f09>
+Verification record created for user: <email:f8534d3f8f09>
+Bad Request: /api/v1/conversations/<id:6fa9c63338af>/messages/mark-as-read/
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Failed to broadcast message delivery receipt
+Failed to broadcast message delivery receipt
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Premium status activated
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Not Found: /api/v1/conversations/generate-media-upload-url/
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Conversation hidden by participant: conversation_id=<id:058416f1033c>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+API request rejected: type=NotAuthenticated code=not_authenticated status=401 view=api:messaging:delete-conversation method=DELETE
+Unauthorized: /api/v1/conversations/<id:dd49cfa2a67d>/
+Conversation hidden by participant: conversation_id=<id:dd49cfa2a67d>
+Conversation hidden by participant: conversation_id=<id:dd49cfa2a67d>
+Not Found: /api/v1/conversations/<id:dd49cfa2a67d>/
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Bad Request: /api/v1/conversations/<id:7aceb9f806dc>/messages/
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Failed to broadcast message read receipt
+Failed to broadcast personal read receipt
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Failed to broadcast message read receipt
+Failed to broadcast personal read receipt
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Premium status activated
+Bad Request: /api/v1/conversations/<id:ede32cbb6038>/messages/media/
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Premium status activated
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Forbidden: /api/v1/calls/initiate
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Premium status activated
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Premium status activated
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Premium status activated
+Bad Request: /api/v1/conversations/<id:7ce8d0e49207>/messages/media/
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Bad Request: /api/v1/conversations/<id:9d763ae13fbc>/messages/
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+Failed to broadcast typing indicator
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+API request rejected: type=NotAuthenticated code=not_authenticated status=401 view=api:messaging:conversations-unread-count method=GET
+Unauthorized: /api/v1/conversations/unread-count/
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:6228d577ed8b>
+Verification record created for user: <email:6228d577ed8b>
+Profile created for user: <email:b8ecf29b766a>
+Verification record created for user: <email:b8ecf29b766a>
+Profile created for user: <email:d3dea7a7ef6f>
+Verification record created for user: <email:d3dea7a7ef6f>
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+Forbidden: /api/v1/conversations/<id:1ace8f28d81c>/messages/delete/
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+Conversation hidden by participant: conversation_id=<id:02ef46e0c306>
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+.Profile created for user: <email:9858c68736fe>
+Verification record created for user: <email:9858c68736fe>
+Profile created for user: <email:d4b587a0b4d6>
+Verification record created for user: <email:d4b587a0b4d6>
+.Profile created for user: <email:f8eace11d725>
+Verification record created for user: <email:f8eace11d725>
+.Profile created for user: <email:f8eace11d725>
+Verification record created for user: <email:f8eace11d725>
+.Profile created for user: <email:f8eace11d725>
+Verification record created for user: <email:f8eace11d725>
+Profile updated
+.Profile created for user: <email:f8eace11d725>
+Verification record created for user: <email:f8eace11d725>
+API request rejected: type=ValidationError code=validation_error status=400 view=api:profiles:my-profile method=PATCH
+Bad Request: /api/v1/user-profiles/me/
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+Profile created for user: <email:1e3fd5bdd114>
+Verification record created for user: <email:1e3fd5bdd114>
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+.Profile created for user: <email:f660ab912ec1>
+Verification record created for user: <email:f660ab912ec1>
+.Profile created for user: <email:a6c804a29c2a>
+Verification record created for user: <email:a6c804a29c2a>
+Profile created for user: <email:6e5539b03879>
+Verification record created for user: <email:6e5539b03879>
+API request rejected: type=ValidationError code=validation_error status=400 view=api:profiles:update-location method=PUT
+Bad Request: /api/v1/user-profiles/me/location/
+.Profile created for user: <email:a6c804a29c2a>
+Verification record created for user: <email:a6c804a29c2a>
+Profile created for user: <email:6e5539b03879>
+Verification record created for user: <email:6e5539b03879>
+.Profile created for user: <email:a6c804a29c2a>
+Verification record created for user: <email:a6c804a29c2a>
+Profile created for user: <email:6e5539b03879>
+Verification record created for user: <email:6e5539b03879>
+Profile photo deleted
+.Profile created for user: <email:a6c804a29c2a>
+Verification record created for user: <email:a6c804a29c2a>
+Profile created for user: <email:6e5539b03879>
+Verification record created for user: <email:6e5539b03879>
+Forbidden: /api/v1/user-profiles/me/photos/reorder/
+.Profile created for user: <email:a6c804a29c2a>
+Verification record created for user: <email:a6c804a29c2a>
+Profile created for user: <email:6e5539b03879>
+Verification record created for user: <email:6e5539b03879>
+.Profile created for user: <email:a6c804a29c2a>
+Verification record created for user: <email:a6c804a29c2a>
+Profile created for user: <email:6e5539b03879>
+Verification record created for user: <email:6e5539b03879>
+.Profile created for user: <email:a6c804a29c2a>
+Verification record created for user: <email:a6c804a29c2a>
+Profile created for user: <email:6e5539b03879>
+Verification record created for user: <email:6e5539b03879>
+Bad Request: /api/v1/user-profiles/me/photos/<id:9258135499f9>/
+.Profile created for user: <email:a6c804a29c2a>
+Verification record created for user: <email:a6c804a29c2a>
+Profile created for user: <email:6e5539b03879>
+Verification record created for user: <email:6e5539b03879>
+Conflict: /api/v1/user-profiles/me/photos/reorder/
+.Profile created for user: <email:a6c804a29c2a>
+Verification record created for user: <email:a6c804a29c2a>
+Profile created for user: <email:6e5539b03879>
+Verification record created for user: <email:6e5539b03879>
+.Profile created for user: <email:45fdeea26a07>
+Verification record created for user: <email:45fdeea26a07>
+Purged invalid FCM tokens: subject=<redacted> count=1
+FCM delivery: subject=<redacted> success=1 failure=1 purged=1
+.Profile created for user: <email:5a490229e7f9>
+Verification record created for user: <email:5a490229e7f9>
+No FCM token: subject=<redacted>
+.Profile created for user: <email:24838ad9433c>
+Verification record created for user: <email:24838ad9433c>
+Profile created for user: <email:b67a362b7d5d>
+Verification record created for user: <email:b67a362b7d5d>
+Profile created for user: <email:bd458c5f5106>
+Verification record created for user: <email:bd458c5f5106>
+.Profile created for user: <email:24838ad9433c>
+Verification record created for user: <email:24838ad9433c>
+Profile created for user: <email:b67a362b7d5d>
+Verification record created for user: <email:b67a362b7d5d>
+Profile created for user: <email:bd458c5f5106>
+Verification record created for user: <email:bd458c5f5106>
+.Profile created for user: <email:24838ad9433c>
+Verification record created for user: <email:24838ad9433c>
+Profile created for user: <email:b67a362b7d5d>
+Verification record created for user: <email:b67a362b7d5d>
+Profile created for user: <email:bd458c5f5106>
+Verification record created for user: <email:bd458c5f5106>
+.Profile created for user: <email:24838ad9433c>
+Verification record created for user: <email:24838ad9433c>
+Profile created for user: <email:b67a362b7d5d>
+Verification record created for user: <email:b67a362b7d5d>
+Profile created for user: <email:bd458c5f5106>
+Verification record created for user: <email:bd458c5f5106>
+.Profile created for user: <email:48484a4bf2a1>
+Verification record created for user: <email:48484a4bf2a1>
+Profile created for user: <email:6e0df3471a05>
+Verification record created for user: <email:6e0df3471a05>
+.Profile created for user: <email:48484a4bf2a1>
+Verification record created for user: <email:48484a4bf2a1>
+Profile created for user: <email:6e0df3471a05>
+Verification record created for user: <email:6e0df3471a05>
+.Profile created for user: <email:dafd357a8ddc>
+Verification record created for user: <email:dafd357a8ddc>
+Profile created for user: <email:a37c7e8ee65c>
+Verification record created for user: <email:a37c7e8ee65c>
+.Profile created for user: <email:dafd357a8ddc>
+Verification record created for user: <email:dafd357a8ddc>
+Profile created for user: <email:a37c7e8ee65c>
+Verification record created for user: <email:a37c7e8ee65c>
+.Profile created for user: <email:dafd357a8ddc>
+Verification record created for user: <email:dafd357a8ddc>
+Profile created for user: <email:a37c7e8ee65c>
+Verification record created for user: <email:a37c7e8ee65c>
+.Profile created for user: <email:dafd357a8ddc>
+Verification record created for user: <email:dafd357a8ddc>
+Profile created for user: <email:a37c7e8ee65c>
+Verification record created for user: <email:a37c7e8ee65c>
+API request rejected: type=Http404 code=request_error status=404 view=api:notification-mark-read method=PUT
+Not Found: /api/v1/notifications/<id:56f8aa5a86b2>/read/
+.Profile created for user: <email:dafd357a8ddc>
+Verification record created for user: <email:dafd357a8ddc>
+Profile created for user: <email:a37c7e8ee65c>
+Verification record created for user: <email:a37c7e8ee65c>
+.Profile created for user: <email:dafd357a8ddc>
+Verification record created for user: <email:dafd357a8ddc>
+Profile created for user: <email:a37c7e8ee65c>
+Verification record created for user: <email:a37c7e8ee65c>
+API request rejected: type=NotAuthenticated code=not_authenticated status=401 view=api:notification-list method=GET
+Unauthorized: /api/v1/notifications/
+.Profile created for user: <email:dafd357a8ddc>
+Verification record created for user: <email:dafd357a8ddc>
+Profile created for user: <email:a37c7e8ee65c>
+Verification record created for user: <email:a37c7e8ee65c>
+.......Profile created for user: <email:d30cac713778>
+Verification record created for user: <email:d30cac713778>
+Profile created for user: <email:637a104d7ad9>
+Verification record created for user: <email:637a104d7ad9>
+Profile created for user: <email:abef557b3d85>
+Verification record created for user: <email:abef557b3d85>
+.Profile created for user: <email:d30cac713778>
+Verification record created for user: <email:d30cac713778>
+Profile created for user: <email:637a104d7ad9>
+Verification record created for user: <email:637a104d7ad9>
+Profile created for user: <email:abef557b3d85>
+Verification record created for user: <email:abef557b3d85>
+.Profile created for user: <email:d30cac713778>
+Verification record created for user: <email:d30cac713778>
+Profile created for user: <email:637a104d7ad9>
+Verification record created for user: <email:637a104d7ad9>
+Profile created for user: <email:abef557b3d85>
+Verification record created for user: <email:abef557b3d85>
+.............Profile created for user: <email:e8a70e6c90a6>
+Verification record created for user: <email:e8a70e6c90a6>
+API request rejected: type=ValidationError code=validation_error status=400 view=api:subscriptions:purchase method=POST
+Bad Request: /api/v1/subscriptions/purchase/
+.Profile created for user: <email:e8a70e6c90a6>
+Verification record created for user: <email:e8a70e6c90a6>
+MyCoolPay Paylink creation failed
+Bad Gateway: /api/v1/subscriptions/purchase/
+.Profile created for user: <email:e8a70e6c90a6>
+Verification record created for user: <email:e8a70e6c90a6>
+.Profile created for user: <email:e8a70e6c90a6>
+Verification record created for user: <email:e8a70e6c90a6>
+Conflict: /api/v1/subscriptions/purchase/
+.Profile created for user: <email:e8a70e6c90a6>
+Verification record created for user: <email:e8a70e6c90a6>
+.Profile created for user: <email:e8a70e6c90a6>
+Verification record created for user: <email:e8a70e6c90a6>
+MyCoolPay payment flow is not configured
+Service Unavailable: /api/v1/subscriptions/purchase/
+.Profile created for user: <email:659f349b2da4>
+Verification record created for user: <email:659f349b2da4>
+API request rejected: type=ValidationError code=validation_error status=400 view=api:subscriptions:purchase method=POST
+Bad Request: /api/v1/subscriptions/purchase/
+.Profile created for user: <email:659f349b2da4>
+Verification record created for user: <email:659f349b2da4>
+.Profile created for user: <email:659f349b2da4>
+Verification record created for user: <email:659f349b2da4>
+API request rejected: type=NotAuthenticated code=not_authenticated status=401 view=api:subscriptions:payment-capabilities method=GET
+Unauthorized: /api/v1/subscriptions/payment-capabilities/
+.Profile created for user: <email:659f349b2da4>
+Verification record created for user: <email:659f349b2da4>
+.Profile created for user: <email:659f349b2da4>
+Verification record created for user: <email:659f349b2da4>
+.Profile created for user: <email:659f349b2da4>
+Verification record created for user: <email:659f349b2da4>
+....Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+Premium status activated
+Purchase transaction created
+Subscription created or updated
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+Premium status activated
+Purchase transaction created
+Subscription created or updated
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+Profile created for user: <email:5b71ed5f9462>
+Verification record created for user: <email:5b71ed5f9462>
+API request rejected: type=Http404 code=request_error status=404 view=api:subscriptions:payment-status method=GET
+Not Found: /api/v1/subscriptions/payments/<id:898d80830b14>/
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+Premium status activated
+Purchase transaction created
+Subscription created or updated
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+Rejected MyCoolPay callback from an unauthorized IP
+Forbidden: /api/v1/webhooks/payments/mycoolpay/
+Rejected MyCoolPay callback with invalid signature
+Forbidden: /api/v1/webhooks/payments/mycoolpay/
+Rejected inconsistent MyCoolPay callback
+Bad Request: /api/v1/webhooks/payments/mycoolpay/
+Premium status activated
+Purchase transaction created
+Subscription created or updated
+.Profile created for user: <email:252d4c6bbbb1>
+Verification record created for user: <email:252d4c6bbbb1>
+Rejected MyCoolPay callback from an unauthorized IP
+Forbidden: /api/v1/webhooks/payments/mycoolpay/
+Premium status activated
+Purchase transaction created
+Subscription created or updated
+.Profile created for user: <email:3216fda364b2>
+Verification record created for user: <email:3216fda364b2>
+.Profile created for user: <email:3216fda364b2>
+Verification record created for user: <email:3216fda364b2>
+.Profile created for user: <email:0ea1e01f6b51>
+Verification record created for user: <email:0ea1e01f6b51>
+Profile created for user: <email:276f384fe227>
+Verification record created for user: <email:276f384fe227>
+Premium status activated
+.Profile created for user: <email:0ea1e01f6b51>
+Verification record created for user: <email:0ea1e01f6b51>
+Profile created for user: <email:276f384fe227>
+Verification record created for user: <email:276f384fe227>
+Premium status activated
+.Profile created for user: <email:0ea1e01f6b51>
+Verification record created for user: <email:0ea1e01f6b51>
+Profile created for user: <email:276f384fe227>
+Verification record created for user: <email:276f384fe227>
+Premium status activated
+.Profile created for user: <email:0ea1e01f6b51>
+Verification record created for user: <email:0ea1e01f6b51>
+Profile created for user: <email:276f384fe227>
+Verification record created for user: <email:276f384fe227>
+Premium status activated
+.Profile created for user: <email:0ea1e01f6b51>
+Verification record created for user: <email:0ea1e01f6b51>
+Profile created for user: <email:276f384fe227>
+Verification record created for user: <email:276f384fe227>
+Premium status activated
+.Profile created for user: <email:2605677a9505>
+Verification record created for user: <email:2605677a9505>
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+Premium status activated
+Premium status activated
+Subscription modified without additional payment (credit covered change): modtest_yearly -> modtest_monthly
+Subscription modified; plan=modtest_monthly proration=True
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+Premium status activated
+Subscription change scheduled: modtest_monthly -> modtest_yearly at next cycle
+Subscription modified; plan=modtest_yearly proration=False
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+API request rejected: type=ValidationError code=validation_error status=400 view=api:subscriptions:modify method=POST
+Bad Request: /api/v1/subscriptions/current/modify/
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+MyCoolPay Paylink creation failed for plan modification
+Bad Gateway: /api/v1/subscriptions/current/modify/
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+Plan-change Paylink created; plan=modtest_yearly net_amount=70.00
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+Bad Request: /api/v1/subscriptions/current/modify/
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+API request rejected: type=ValidationError code=validation_error status=400 view=api:subscriptions:modify method=POST
+Bad Request: /api/v1/subscriptions/current/modify/
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+Premium status activated
+Premium status activated
+Subscription modified without additional payment (credit covered change): modtest_yearly -> modtest_monthly
+Subscription modified; plan=modtest_monthly proration=True
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+Bad Request: /api/v1/subscriptions/current/modify/
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+API request rejected: type=NotAuthenticated code=not_authenticated status=401 view=api:subscriptions:modify method=POST
+Unauthorized: /api/v1/subscriptions/current/modify/
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+Subscription canceled
+Bad Request: /api/v1/subscriptions/current/modify/
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+Premium status activated
+Subscription change scheduled: modtest_monthly -> modtest_yearly at next cycle
+Subscription modified; plan=modtest_yearly proration=False
+.Profile created for user: <email:8b0dd9027260>
+Verification record created for user: <email:8b0dd9027260>
+Premium status activated
+Premium status removed after subscription deletion
+Bad Request: /api/v1/subscriptions/current/modify/
+.Profile created for user: <email:a8ee3c223820>
+Verification record created for user: <email:a8ee3c223820>
+Premium status activated
+Premium status activated
+Premium status activated
+Subscription modified without additional payment (credit covered change): svc_yearly -> svc_monthly
+.Profile created for user: <email:a8ee3c223820>
+Verification record created for user: <email:a8ee3c223820>
+Premium status activated
+Premium status activated
+Premium status activated
+Subscription modified without additional payment (credit covered change): svc_yearly -> svc_monthly
+.Profile created for user: <email:a8ee3c223820>
+Verification record created for user: <email:a8ee3c223820>
+Premium status activated
+Premium status activated
+Premium status activated
+Subscription modified without additional payment (credit covered change): svc_yearly -> svc_monthly
+.Profile created for user: <email:a8ee3c223820>
+Verification record created for user: <email:a8ee3c223820>
+Premium status activated
+.Profile created for user: <email:a8ee3c223820>
+Verification record created for user: <email:a8ee3c223820>
+Premium status activated
+Premium status activated
+Subscription change scheduled: svc_monthly -> svc_yearly at next cycle
+.Profile created for user: <email:a8ee3c223820>
+Verification record created for user: <email:a8ee3c223820>
+Premium status activated
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+Premium status activated
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+Premium status activated
+.Profile created for user: <email:88b8b322a113>
+Verification record created for user: <email:88b8b322a113>
+.Profile created for user: <email:88b8b322a113>
+Verification record created for user: <email:88b8b322a113>
+.Profile created for user: <email:88b8b322a113>
+Verification record created for user: <email:88b8b322a113>
+.Profile created for user: <email:88b8b322a113>
+Verification record created for user: <email:88b8b322a113>
+Premium status deactivated
+.Profile created for user: <email:88b8b322a113>
+Verification record created for user: <email:88b8b322a113>
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+Premium status activated
+Premium status activated
+Subscription canceled
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+Premium status activated
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+Premium status activated
+Premium status activated
+Premium status activated
+Premium status activated
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+Premium status activated
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+Premium status activated
+Premium status activated
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+Premium status activated
+Premium status activated
+....Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+.Profile created for user: <email:973dfe463ec8>
+Verification record created for user: <email:973dfe463ec8>
+Premium status activated
+Purchase transaction created
+Subscription created or updated
+.Profile created for user: <email:8649a8b7134f>
+Verification record created for user: <email:8649a8b7134f>
+Profile created for user: <email:27f5616f4d62>
+Verification record created for user: <email:27f5616f4d62>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+Forbidden: /api/v1/conversations/<id:ec42c4f8a897>/messages/
+.Profile created for user: <email:8649a8b7134f>
+Verification record created for user: <email:8649a8b7134f>
+Profile created for user: <email:27f5616f4d62>
+Verification record created for user: <email:27f5616f4d62>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:8ce123803334>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:dc80ddacff8e>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:dc3a0e4911f5>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:f96a3b8d27b1>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:cb16f3cd48b0>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:93ea892b2921>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:e41694d3222f>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:285c1071f3a3>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:4de58b7a7f7f>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:27be99ebf478>
+Conversation websocket connected: conversation_id=<id:b0ffeb31d7d9>
+Conversation websocket message service rejected a send
+Conversation websocket disconnected: conversation_id=<id:b0ffeb31d7d9>
+.Profile created for user: <email:9f2af41edac9>
+Verification record created for user: <email:9f2af41edac9>
+Profile created for user: <email:ce2e6ce12641>
+Verification record created for user: <email:ce2e6ce12641>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:3bcb5cfbbcdb>
+.Profile created for user: <email:9f2af41edac9>
+Verification record created for user: <email:9f2af41edac9>
+Profile created for user: <email:ce2e6ce12641>
+Verification record created for user: <email:ce2e6ce12641>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:e0eb08e4e4fe>
+.Profile created for user: <email:9f2af41edac9>
+Verification record created for user: <email:9f2af41edac9>
+Profile created for user: <email:ce2e6ce12641>
+Verification record created for user: <email:ce2e6ce12641>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:788e22cc856d>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:91e04f9d05ee>
+No FCM token: subject=<redacted>
+Read receipt push dispatch failed for match_id=<id:11c6d0e0cd9e>
+.Profile created for user: <email:9f2af41edac9>
+Verification record created for user: <email:9f2af41edac9>
+Profile created for user: <email:ce2e6ce12641>
+Verification record created for user: <email:ce2e6ce12641>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:d5a3469f15bd>
+Conversation websocket connected: conversation_id=<id:2e1d9d3a9407>
+Conversation websocket disconnected: conversation_id=<id:2e1d9d3a9407>
+.Profile created for user: <email:9f2af41edac9>
+Verification record created for user: <email:9f2af41edac9>
+Profile created for user: <email:ce2e6ce12641>
+Verification record created for user: <email:ce2e6ce12641>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:eb512929756b>
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:3a07c6cfaea7>
+.Profile created for user: <email:9f2af41edac9>
+Verification record created for user: <email:9f2af41edac9>
+Profile created for user: <email:ce2e6ce12641>
+Verification record created for user: <email:ce2e6ce12641>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:76dc9a7a107b>
+WS notifications: user <id:35e1fc4189e7> connected
+WS notifications: user <id:35e1fc4189e7> disconnected (1000)
+.Profile created for user: <email:9f2af41edac9>
+Verification record created for user: <email:9f2af41edac9>
+Profile created for user: <email:ce2e6ce12641>
+Verification record created for user: <email:ce2e6ce12641>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:6b7529dcbb23>
+WS notifications: user <id:08a5faafde11> connected
+WS notifications: user <id:08a5faafde11> disconnected (1000)
+.Profile created for user: <email:9f2af41edac9>
+Verification record created for user: <email:9f2af41edac9>
+Profile created for user: <email:ce2e6ce12641>
+Verification record created for user: <email:ce2e6ce12641>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:f19a0d44698a>
+WS notifications: connexion sans token refus�e
+.Profile created for user: <email:9f2af41edac9>
+Verification record created for user: <email:9f2af41edac9>
+Profile created for user: <email:ce2e6ce12641>
+Verification record created for user: <email:ce2e6ce12641>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Message push dispatch failed: message_id=<id:7045fdffa901>
+WS notifications: user <id:cd453cc7650f> connected
+WS notifications: user <id:729e7a4f74ec> connected
+WS notifications: user <id:cd453cc7650f> disconnected (1000)
+WS notifications: user <id:729e7a4f74ec> disconnected (1000)
+.Profile created for user: <email:f92c3c895f0f>
+Verification record created for user: <email:f92c3c895f0f>
+Profile created for user: <email:8f0af99b287f>
+Verification record created for user: <email:8f0af99b287f>
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+No FCM token: subject=<redacted>
+Notification task unavailable: No module named 'memory'
+.
+----------------------------------------------------------------------
+Ran 266 tests in 62.460s
+
+OK
+Destroying test database for alias 'default'...
+Found 266 test(s).
+System check identified no issues (0 silenced).

@@ -13,6 +13,11 @@ from datetime import timedelta
 User = get_user_model()
 
 
+def generate_payment_reference():
+    """Return an opaque merchant reference safe to expose to MyCoolPay."""
+    return f"hivmeet_{uuid.uuid4().hex}"
+
+
 class SubscriptionPlan(models.Model):
     """
     Model representing subscription plans.
@@ -151,6 +156,16 @@ class SubscriptionPlan(models.Model):
         verbose_name_plural = _('Subscription plans')
         ordering = ['order', 'price']
         db_table = 'subscription_plans'
+        constraints = [
+            models.CheckConstraint(
+                # Django 4.2 (version pinned by requirements.txt) names this
+                # argument ``check``. ``condition`` is only accepted by newer
+                # Django releases and prevents the application registry from
+                # loading on the supported runtime.
+                check=~models.Q(plan_id=''),
+                name='subscription_plan_id_not_empty',
+            ),
+        ]
     
     def __str__(self):
         return f"{self.name} - {self.price} {self.currency}"
@@ -380,11 +395,13 @@ class Transaction(models.Model):
     TYPE_PURCHASE = 'purchase'
     TYPE_RENEWAL = 'renewal'
     TYPE_REFUND = 'refund'
+    TYPE_MODIFICATION = 'modification'
     
     TYPE_CHOICES = [
         (TYPE_PURCHASE, _('Purchase')),
         (TYPE_RENEWAL, _('Renewal')),
         (TYPE_REFUND, _('Refund')),
+        (TYPE_MODIFICATION, _('Modification')),
     ]
     
     STATUS_PENDING = 'pending'
@@ -483,6 +500,90 @@ class Transaction(models.Model):
     
     def __str__(self):
         return f"{self.transaction_id} - {self.amount} {self.currency} ({self.status})"
+
+
+class PaymentTransaction(models.Model):
+    """Merchant-side source of truth for a MyCoolPay checkout."""
+
+    STATUS_CREATED = 'CREATED'
+    STATUS_PENDING = 'PENDING'
+    STATUS_SUCCESS = 'SUCCESS'
+    STATUS_CANCELED = 'CANCELED'
+    STATUS_FAILED = 'FAILED'
+    STATUS_CHOICES = [
+        (STATUS_CREATED, _('Created')),
+        (STATUS_PENDING, _('Pending')),
+        (STATUS_SUCCESS, _('Success')),
+        (STATUS_CANCELED, _('Canceled')),
+        (STATUS_FAILED, _('Failed')),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    app_transaction_ref = models.CharField(
+        max_length=100,
+        unique=True,
+        default=generate_payment_reference,
+        editable=False,
+    )
+    provider_transaction_ref = models.CharField(
+        max_length=100,
+        unique=True,
+        null=True,
+        blank=True,
+    )
+    idempotency_key = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        editable=False,
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='payment_transactions',
+    )
+    plan = models.ForeignKey(
+        SubscriptionPlan,
+        on_delete=models.PROTECT,
+        related_name='payment_transactions',
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default=STATUS_CREATED,
+    )
+    payment_url = models.URLField(max_length=500, blank=True)
+    provider_message = models.CharField(max_length=255, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    fulfilled_at = models.DateTimeField(null=True, blank=True)
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'subscription_payment_transactions'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['status', 'created_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='unique_payment_idempotency_key_per_user',
+            ),
+        ]
+
+    @property
+    def is_fulfilled(self):
+        return self.fulfilled_at is not None
+
+    def __str__(self):
+        return f"{self.app_transaction_ref} ({self.status})"
 
 
 class WebhookEvent(models.Model):

@@ -22,10 +22,12 @@ django.setup()
 
 # Import WebSocket consumers after Django setup
 from messaging.consumers import ConversationConsumer
+from notifications.consumers import UserNotificationConsumer
 
 # WebSocket URL patterns
 websocket_urlpatterns = [
     path('ws/conversations/<uuid:conversation_id>/', ConversationConsumer.as_asgi()),
+    path('ws/notifications/', UserNotificationConsumer.as_asgi()),
 ]
 
 # ASGI application with protocol routing

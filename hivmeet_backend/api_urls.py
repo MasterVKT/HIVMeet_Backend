@@ -30,7 +30,10 @@ urlpatterns = [
     path('user-settings/', include('profiles.urls_settings')),
 
     path('webhooks/payments/mycoolpay/', mycoolpay_webhook, name='mycoolpay-webhook'),
-    
+
+    # Notifications endpoints
+    path('notifications/', include('notifications.urls')),
+
     # Reporting endpoints
     # path('reports/', include('moderation.urls')),
 ]

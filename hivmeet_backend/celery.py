@@ -20,6 +20,22 @@ app.autodiscover_tasks()
 
 # Celery beat schedule
 app.conf.beat_schedule = {
+    'expire-kyc-upload-intents': {
+        'task': 'profiles.tasks.expire_kyc_upload_intents',
+        'schedule': crontab(minute='*/5'),
+    },
+    'purge-due-kyc-documents': {
+        'task': 'profiles.tasks.purge_due_kyc_documents',
+        'schedule': crontab(minute='*/10'),
+    },
+    'expire-verified-kyc-attempts': {
+        'task': 'profiles.tasks.expire_verified_kyc_attempts',
+        'schedule': crontab(minute='*/15'),
+    },
+    'reconcile-pending-mycoolpay-payments': {
+        'task': 'subscriptions.tasks.reconcile_pending_mycoolpay_payments',
+        'schedule': crontab(minute='*/5'),
+    },
     # Subscription tasks
     'check-subscription-expirations': {
         'task': 'subscriptions.tasks.check_subscription_expirations',
@@ -36,10 +52,6 @@ app.conf.beat_schedule = {
     'reset-monthly-counters': {
         'task': 'subscriptions.tasks.reset_monthly_counters',
         'schedule': crontab(hour=0, minute=30),  # Daily at 00:30
-    },
-    'retry-failed-payments': {
-        'task': 'subscriptions.tasks.retry_failed_payments',
-        'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours
     },
     'clean-old-webhook-events': {
         'task': 'subscriptions.tasks.clean_old_webhook_events',

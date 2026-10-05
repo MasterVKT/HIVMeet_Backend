@@ -167,5 +167,18 @@ Pour règles détaillées, consulter:
 
 ---
 
-**Documentation**: [API_DOCUMENTATION.md](mdc:docs/API_DOCUMENTATION.md), [backend-specs.md](mdc:docs/backend-specs.md), [backend-dev-plan.md](mdc:docs/backend-dev-plan.md)  
+**Documentation**: [API_DOCUMENTATION.md](mdc:docs/API_DOCUMENTATION.md), [backend-specs.md](mdc:docs/backend-specs.md), [backend-dev-plan.md](mdc:docs/backend-dev-plan.md)
 **Version**: 1.0 | **Last Updated**: 2026-02-22
+
+---
+
+## 🎯 Skills Orchestrator
+
+All project skills are in `.agents/skills/` (single source of truth, 22 skills).
+
+**TOUJOURS commencer par charger le router** avant toute requête :
+- Lire [.agents/skills/task-router/SKILL.md](mdc:.agents/skills/task-router/SKILL.md)
+- Appliquer son arbre de décision pour identifier la ou les skills appropriées
+- Catalog complet : [.agents/skills/BACKEND_SKILLS_CATALOG.md](mdc:.agents/skills/BACKEND_SKILLS_CATALOG.md)
+
+Les hooks `beforeSubmitPrompt` et `stop` (`.cursor/hooks.json`) injectent ce rappel automatiquement.

@@ -1,0 +1,17 @@
+name: Code Review Graph
+version: 1.0.0
+schema: v1
+mcpServers:
+  - name: code-review-graph
+    type: stdio
+    command: D:/Projets/HIVMeet/env/hivmeet_backend/.venv/Scripts/code-review-graph.exe
+    args:
+      - serve
+      - --repo
+      - D:/Projets/HIVMeet/env/hivmeet_backend
+    cwd: D:/Projets/HIVMeet/env/hivmeet_backend
+    env:
+      PYTHONUTF8: "1"
+      CRG_REPO_ROOT: D:/Projets/HIVMeet/env/hivmeet_backend
+      CRG_DATA_DIR: D:/Projets/HIVMeet/env/hivmeet_backend/.code-review-graph
+    connectionTimeout: 120000

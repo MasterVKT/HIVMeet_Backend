@@ -1,0 +1,4 @@
+interface:
+  display_name: "HIVMeet Backend Completion Audit"
+  short_description: "Contrôle la complétude, la sécurité et les contrats Django."
+  default_prompt: "Audite cette intervention backend HIVMeet avant livraison."

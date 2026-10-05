@@ -1,0 +1,4 @@
+interface:
+  display_name: "HIVMeet Backend Orchestrator"
+  short_description: "Route le travail Django et les dépendances frontend."
+  default_prompt: "Route cette demande HIVMeet depuis le backend en protégeant contrat et données."

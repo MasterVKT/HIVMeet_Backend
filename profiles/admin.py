@@ -3,9 +3,8 @@ Admin configuration for profiles app.
 """
 from django.utils import timezone
 from django.contrib import admin
-from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from .models import Profile, ProfilePhoto, Verification
+from .models import Profile, ProfilePhoto, Verification, DataExportRequest, AccountDeletionRequest
 
 
 @admin.register(Profile)
@@ -46,15 +45,11 @@ class ProfilePhotoAdmin(admin.ModelAdmin):
     readonly_fields = ['thumbnail_preview', 'photo_preview', 'uploaded_at']
     
     def thumbnail_preview(self, obj):
-        if obj.thumbnail_url:
-            return format_html('<img src="{}" style="max-height: 50px;"/>', obj.thumbnail_url)
-        return '-'
+        return _('Private profile media is not rendered in this admin.')
     thumbnail_preview.short_description = _('Thumbnail')
     
     def photo_preview(self, obj):
-        if obj.photo_url:
-            return format_html('<img src="{}" style="max-height: 200px;"/>', obj.photo_url)
-        return '-'
+        return _('Private profile media is not rendered in this admin.')
     photo_preview.short_description = _('Photo')
 
 
@@ -63,14 +58,11 @@ class VerificationAdmin(admin.ModelAdmin):
     list_display = ['user', 'status', 'submitted_at', 'reviewed_at', 'expires_at']
     list_filter = ['status', 'submitted_at', 'expires_at']
     search_fields = ['user__email', 'user__display_name']
-    readonly_fields = ['verification_code', 'created_at', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at']
     
     fieldsets = (
         (_('User'), {
-            'fields': ('user', 'verification_code')
-        }),
-        (_('Documents'), {
-            'fields': ('id_document_path', 'medical_document_path', 'selfie_path')
+            'fields': ('user',)
         }),
         (_('Status'), {
             'fields': ('status', 'rejection_reason')
@@ -102,3 +94,39 @@ class VerificationAdmin(admin.ModelAdmin):
             verification.save()
         self.message_user(request, _('Selected verifications have been rejected.'))
     reject_verification.short_description = _('Reject selected verifications')
+
+
+@admin.register(DataExportRequest)
+class DataExportRequestAdmin(admin.ModelAdmin):
+    list_display = ['user', 'status', 'requested_at', 'completed_at', 'expires_at']
+    list_filter = ['status', 'requested_at', 'completed_at']
+    search_fields = ['user__email', 'user__display_name']
+    readonly_fields = ['id', 'requested_at', 'completed_at']
+    ordering = ['-requested_at']
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(AccountDeletionRequest)
+class AccountDeletionRequestAdmin(admin.ModelAdmin):
+    list_display = ['user', 'status', 'requested_at', 'confirmed_at', 'completed_at', 'grace_period_hours']
+    list_filter = ['status', 'requested_at', 'confirmed_at', 'completed_at']
+    search_fields = ['user__email', 'user__display_name']
+    readonly_fields = ['id', 'requested_at', 'confirmed_at', 'completed_at']
+    ordering = ['-requested_at']
+
+    actions = ['force_process_deletion']
+
+    def has_add_permission(self, request):
+        return False
+
+    def force_process_deletion(self, request, queryset):
+        from profiles.tasks import process_account_deletion
+        for deletion_request in queryset.filter(status=AccountDeletionRequest.STATUS_CONFIRMED):
+            deletion_request.grace_period_hours = 0
+            deletion_request.confirmed_at = timezone.now() - timezone.timedelta(hours=1)
+            deletion_request.save(update_fields=['grace_period_hours', 'confirmed_at'])
+            process_account_deletion.delay(str(deletion_request.id))
+        self.message_user(request, _('Selected deletion requests will be processed immediately.'))
+    force_process_deletion.short_description = _('Force immediate account deletion')

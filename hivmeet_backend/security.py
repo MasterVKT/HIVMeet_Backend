@@ -42,7 +42,10 @@ class RateLimitMiddleware(MiddlewareMixin):
         
         # Get client identifier
         client_id = self.get_client_id(request)
-        path = request.path.lstrip('/api/v1/')
+        # ``lstrip`` removes a set of characters rather than an exact prefix;
+        # it turned ``/api/v1/auth/login`` into ``uth/login`` and bypassed the
+        # configured rule entirely.
+        path = request.path.removeprefix('/api/v1/').lstrip('/')
         
         # Check each rate limit pattern
         for pattern, (limit, window) in self.RATE_LIMITS.items():
@@ -70,6 +73,9 @@ class RateLimitMiddleware(MiddlewareMixin):
     
     def should_rate_limit(self, request):
         """Determine if request should be rate limited."""
+        if not getattr(settings, 'RATELIMIT_ENABLE', True):
+            return False
+
         # In DEBUG/development mode, never apply rate limiting.
         # JWT/Firebase auth is resolved at the DRF view level, so request.user
         # is still AnonymousUser here — making per-user bypass unreliable in dev.
@@ -127,7 +133,7 @@ class SecurityHeadersMiddleware(MiddlewareMixin):
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: https:; "
             "font-src 'self' data:; "
-            "connect-src 'self' https://api.mycoolpay.com; "
+            "connect-src 'self'; "
             "frame-ancestors 'none';"
         )
         
@@ -166,7 +172,7 @@ class AuditLogMiddleware(MiddlewareMixin):
     
     def should_log(self, request, response):
         """Determine if operation should be logged."""
-        path = request.path.lstrip('/api/v1/')
+        path = request.path.removeprefix('/api/v1/').lstrip('/')
         
         for method, pattern in self.SENSITIVE_OPERATIONS:
             if request.method == method and re.match(pattern, path):

@@ -149,10 +149,8 @@ Selon `docs/Document de Spécification Interface - HIVMeet.txt` et `docs/FRONTEN
 - `GET /conversations/{conversation_id}/presence` - Statut de présence
 
 #### Flux de Téléversement Média
-1. Frontend appelle `POST /conversations/generate-media-upload-url`
-2. Backend retourne `upload_url` et `file_path_on_storage`
-3. Frontend upload sur Firebase Storage
-4. Frontend appelle `POST /conversations/{id}/messages` avec `media_file_path_on_storage`
+1. Frontend appelle `POST /conversations/{id}/messages/media/` en `multipart/form-data`
+2. Backend valide, persiste le fichier dans le stockage configuré, puis retourne le message avec `media_url`
 
 #### Notifications FCM attendues
 - `NEW_MATCH` - Nouveau match
@@ -273,8 +271,7 @@ is_typing = cache.get(f"typing_{match.id}_{other_user.id}")
 {
   "client_message_id": "client-123",
   "content": "Bonjour!",
-  "type": "text",
-  "media_file_path_on_storage": null
+  "type": "text"
 }
 
 // Réponse 201

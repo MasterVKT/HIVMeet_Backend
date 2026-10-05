@@ -1,0 +1,9 @@
+{
+  "codex.localEnvironmentConfigPath": "${workspaceFolder}/.codex",
+  "chat.hookFilesLocations": {
+    ".vscode/hooks": true,
+    ".github/hooks": false,
+    ".claude/settings.json": false,
+    ".claude/settings.local.json": false
+  }
+}

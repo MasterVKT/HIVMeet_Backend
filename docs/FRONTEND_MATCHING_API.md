@@ -1,5 +1,17 @@
 # 💕 API Matching - Documentation Frontend
 
+> ## Contrat d’interactions actif
+>
+> Une action de découverte renvoie un `interaction_id` stable tant qu’elle reste
+> active. Le même swipe est idempotent. Après un rewind ou une révocation, une
+> nouvelle action reçoit un nouvel `interaction_id` : le client doit toujours
+> utiliser celui de la réponse la plus récente pour le rewind explicite.
+>
+> Un profil ne peut avoir qu’une interaction active par utilisateur. Les
+> historiques masquent par défaut les lignes révoquées ; `interaction_type` vaut
+> `like`, `super_like` ou `dislike`, afin que le client affiche distinctement un
+> Super Like. Aucun endpoint existant ni quota n’est modifié.
+
 ## 📋 Vue d'Ensemble
 
 Le module Matching gère le système de découverte de profils, les likes/dislikes, l'algorithme de matching, et les fonctionnalités premium associées (super likes, boosts, rewind).
@@ -379,8 +391,8 @@ filter: "all|new|active"
 ## 🎯 Limites et Restrictions
 
 ### Utilisateurs Gratuits
-- **Likes quotidiens** : 50 par jour
-- **Super likes** : 1 par jour
+- **Likes quotidiens** : 10 swipes par jour
+- **Super likes** : non disponibles
 - **Rewinds** : 0 par jour
 - **Boosts** : 0 par mois
 - **Voir qui a liké** : Non disponible
@@ -447,4 +459,4 @@ filter: "all|new|active"
 - Transitions seamless entre les profils
 - Loading states pendant les appels API
 
-Cette documentation couvre tous les aspects du système de matching nécessaires pour une intégration frontend complète avec le backend HIVMeet. 
+Cette documentation couvre tous les aspects du système de matching nécessaires pour une intégration frontend complète avec le backend HIVMeet.

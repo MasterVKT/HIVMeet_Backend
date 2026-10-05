@@ -37,4 +37,12 @@ urlpatterns = [
     # FCM token
     path('fcm-token', views.RegisterFCMTokenView.as_view(), name='fcm-token'),
     path('fcm-token/', views.RegisterFCMTokenView.as_view()),  # alias avec slash
+
+    # Reports (Signalements)
+    path('report-user', views.report_user_view, name='report-user'),
+    path('report-user/', views.report_user_view),  # alias avec slash
+    path('reports', views.my_reports_view, name='my-reports'),
+    path('reports/', views.my_reports_view),  # alias avec slash
+    path('reports/<uuid:report_id>/resolve', views.resolve_report_view, name='resolve-report'),
+    path('reports/<uuid:report_id>/resolve/', views.resolve_report_view),  # alias avec slash
 ]

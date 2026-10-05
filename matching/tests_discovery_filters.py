@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 from matching.daily_likes_service import DailyLikesService
 from matching.models import InteractionHistory, Like
 from matching.services import MatchingService, RecommendationService
+from subscriptions.models import Subscription, SubscriptionPlan
 
 
 User = get_user_model()
@@ -372,6 +373,27 @@ class DiscoveryFilterDeterministicTests(TestCase):
         self.assertIn("genders", response.data["details"])
         self.assertIn("relationship_types", response.data["details"])
 
+    def test_filters_endpoint_rejects_multiple_sought_genders(self):
+        user = self._create_user_with_profile(
+            "filters.single-gender@test.com",
+            "Filters Single Gender",
+            1990,
+            "male",
+            genders_sought=["female"],
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.put(
+            "/api/v1/discovery/filters",
+            {"genders": ["male", "female"]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("genders", response.data["details"])
+        user.profile.refresh_from_db()
+        self.assertEqual(user.profile.genders_sought, ["female"])
+
 
 class DailyLikesDeterministicTests(TestCase):
     def _create_user(self, email, birth_year, is_premium=False):
@@ -383,8 +405,33 @@ class DailyLikesDeterministicTests(TestCase):
         )
         user.email_verified = True
         user.is_active = True
-        user.is_premium = is_premium
-        user.save(update_fields=["email_verified", "is_active", "is_premium"])
+        user.save(update_fields=["email_verified", "is_active"])
+
+        if is_premium:
+            plan = SubscriptionPlan.objects.create(
+                plan_id=f"matching-{str(user.id)[:8]}",
+                name="Premium",
+                name_en="Premium",
+                name_fr="Premium",
+                description="Matching tests",
+                description_en="Matching tests",
+                description_fr="Tests matching",
+                price="7.99",
+                currency="EUR",
+                billing_interval=SubscriptionPlan.INTERVAL_MONTH,
+                daily_super_likes_count=5,
+            )
+            now = timezone.now()
+            Subscription.objects.create(
+                subscription_id=f"matching-subscription-{user.id}",
+                user=user,
+                plan=plan,
+                status=Subscription.STATUS_ACTIVE,
+                current_period_start=now,
+                current_period_end=now + timedelta(days=30),
+                super_likes_remaining=5,
+            )
+            user.refresh_from_db()
 
         profile = user.profile
         profile.gender = "male" if "male" in email else "female"
@@ -393,19 +440,19 @@ class DailyLikesDeterministicTests(TestCase):
         profile.save()
         return user
 
-    def test_free_user_super_like_limit_is_one_per_day(self):
+    def test_free_user_cannot_send_super_likes(self):
         free_user = self._create_user("male.free@test.com", 1990, is_premium=False)
         target = self._create_user("female.free.target@test.com", 1991, is_premium=False)
 
         can_super_like, _ = DailyLikesService.can_user_super_like(free_user)
-        self.assertTrue(can_super_like)
+        self.assertFalse(can_super_like)
 
         success, _, _, _ = MatchingService.like_profile(
             from_user=free_user,
             to_user=target,
             is_super_like=True,
         )
-        self.assertTrue(success)
+        self.assertFalse(success)
 
         self.assertEqual(DailyLikesService.get_super_likes_remaining(free_user), 0)
         can_super_like, _ = DailyLikesService.can_user_super_like(free_user)

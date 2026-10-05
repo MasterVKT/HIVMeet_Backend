@@ -25,49 +25,58 @@ Le module Subscriptions gère les abonnements premium, l'intégration avec MyCoo
 
 ### 1. Liste des Plans Disponibles
 
-**Endpoint :** `GET /subscriptions/plans`
+**Endpoint :** `GET /subscriptions/plans/`
 
-**Paramètres de Requête :**
-```
-language: "fr|en"
-currency: "EUR|USD"
-```
+**Headers :** `Authorization: Bearer …`, `Accept-Language: fr|en`.
+
+La devise vient du profil (`AUTO`, `XAF`, `EUR`) et non d'un paramètre de
+requête. `AUTO` utilise le pays du profil, sans coordonnées précises.
 
 **Réponse Succès (200) :**
 ```json
 {
-  "plans": [
+  "count": 2,
+  "next": null,
+  "previous": null,
+  "results": [
     {
-      "id": "uuid",
       "plan_id": "hivmeet_monthly",
       "name": "HIVMeet Premium Mensuel",
       "description": "Accès complet aux fonctionnalités premium",
-      "price": 9.99,
+      "price": "7.99",
       "currency": "EUR",
+      "base_price": "7.99",
+      "base_currency": "EUR",
       "billing_interval": "month",
+      "monthly_equivalent": "7.99",
       "trial_period_days": 7,
       "features": {
         "unlimited_likes": true,
         "can_see_likers": true,
         "can_rewind": true,
+        "daily_rewinds_count": 5,
         "monthly_boosts_count": 1,
         "daily_super_likes_count": 5,
         "media_messaging_enabled": true,
         "audio_video_calls_enabled": true
       },
       "savings_percentage": 0,
-      "most_popular": false
+      "most_popular": false,
+      "recommended": false
     },
     {
-      "id": "uuid",
-      "plan_id": "hivmeet_yearly",
+      "plan_id": "hivmeet_annual",
       "name": "HIVMeet Premium Annuel",
-      "price": 79.99,
+      "price": "57.99",
       "currency": "EUR",
+      "base_price": "57.99",
+      "base_currency": "EUR",
       "billing_interval": "year",
+      "monthly_equivalent": "4.83",
       "features": { /* ... */ },
-      "savings_percentage": 33,
-      "most_popular": true
+      "savings_percentage": 40,
+      "most_popular": true,
+      "recommended": true
     }
   ]
 }
@@ -80,9 +89,17 @@ currency: "EUR|USD"
 - Support multilingue et multi-devise
 - Interface d'upgrade attrayante
 
+### Capacités de paiement
+
+**Endpoint :** `GET /subscriptions/payment-capabilities/`
+
+Retourne `available`, `callback_verification_available`, les devises activées
+et la devise effective, sans exposer aucune clé MyCoolPay. Le frontend doit
+consulter ce contrat avant d'autoriser la validation du formulaire.
+
 ### 2. Abonnement Actuel de l'Utilisateur
 
-**Endpoint :** `GET /subscriptions/current`
+**Endpoint :** `GET /subscriptions/current/`
 
 **Headers Requis :**
 ```
@@ -92,31 +109,30 @@ Authorization: Bearer <access_token>
 **Réponse Succès (200) :**
 ```json
 {
-  "subscription": {
-    "id": "uuid",
-    "plan": {
-      "name": "HIVMeet Premium Mensuel",
-      "price": 9.99,
-      "currency": "EUR"
-    },
-    "status": "active",
-    "current_period_start": "2024-01-15T00:00:00Z",
-    "current_period_end": "2024-02-15T00:00:00Z",
-    "trial_end": null,
-    "auto_renew": true,
-    "cancel_at_period_end": false,
-    "features_usage": {
-      "boosts_remaining": 1,
-      "super_likes_remaining": 3,
-      "last_boosts_reset": "2024-01-15T00:00:00Z",
-      "last_super_likes_reset": "2024-01-20T00:00:00Z"
-    },
-    "payment_method": "credit_card",
-    "next_billing_date": "2024-02-15T00:00:00Z"
-  },
-  "is_premium": true
+  "subscription_id": "provider-reference",
+  "plan_id": "hivmeet_monthly",
+  "plan_name": "Abonnement Mensuel",
+  "status": "active",
+  "current_period_start": "2026-09-13T00:00:00Z",
+  "current_period_end": "2026-10-13T00:00:00Z",
+  "auto_renew": true,
+  "cancel_at_period_end": false,
+  "scheduled_change": null,
+  "features_summary": {
+    "unlimited_likes": true,
+    "can_see_likers": true,
+    "can_rewind": true,
+    "daily_rewinds_count": 5,
+    "monthly_boosts_count": 1,
+    "daily_super_likes_count": 5,
+    "media_messaging_enabled": true,
+    "audio_video_calls_enabled": true
+  }
 }
 ```
+
+Sans abonnement actif, le même schéma est renvoyé avec `status: "none"`,
+les identifiants et dates à `null`, et tous les droits à `false` ou `0`.
 
 **Logique d'Implémentation Frontend :**
 - Dashboard de gestion de l'abonnement
@@ -129,15 +145,18 @@ Authorization: Bearer <access_token>
 
 ### 3. Initiation d'Abonnement
 
-**Endpoint :** `POST /subscriptions/`
+**Endpoint :** `POST /subscriptions/purchase/`
+
+**Header obligatoire pour Flutter :**
+`Idempotency-Key: <identifiant unique de tentative>`. La clé est persistée
+avant l'appel et réutilisée pour toute reprise de la même tentative.
 
 **Données Requises :**
 ```json
 {
   "plan_id": "hivmeet_monthly",
-  "payment_method": "credit_card",
-  "return_url": "https://app.hivmeet.com/subscription/success",
-  "cancel_url": "https://app.hivmeet.com/subscription/cancel"
+  "phone_number": "+237699009900",
+  "language": "fr"
 }
 ```
 
@@ -151,15 +170,12 @@ Authorization: Bearer <access_token>
 **Réponse Succès (201) :**
 ```json
 {
-  "subscription": {
-    "id": "uuid",
-    "status": "pending"
-  },
-  "payment_session": {
-    "session_id": "mycoolpay_session_id",
-    "payment_url": "https://pay.mycoolpay.com/session/...",
-    "expires_at": "2024-01-20T17:00:00Z"
-  }
+  "payment_id": "uuid",
+  "payment_url": "https://my-coolpay.com/payment/checkout/...",
+  "payment_status": "pending",
+  "amount": "5241",
+  "currency": "XAF",
+  "idempotent_replay": false
 }
 ```
 
@@ -172,7 +188,7 @@ Authorization: Bearer <access_token>
 
 ### 4. Validation du Paiement
 
-**Endpoint :** `GET /subscriptions/validate-payment/{session_id}`
+**Endpoint :** `GET /subscriptions/payments/{payment_id}/`
 
 **Principe d'Implémentation :**
 - Vérification du statut du paiement MyCoolPay
@@ -183,18 +199,18 @@ Authorization: Bearer <access_token>
 **Réponse Succès (200) :**
 ```json
 {
+  "payment_id": "uuid",
   "payment_status": "succeeded",
+  "fulfilled": true,
+  "subscription_id": "provider-reference",
+  "activated_at": "2026-09-13T16:45:00Z",
   "subscription": {
-    "id": "uuid",
+    "subscription_id": "provider-reference",
+    "plan_id": "hivmeet_monthly",
     "status": "active",
-    "activated_at": "2024-01-20T16:45:00Z"
-  },
-  "features_unlocked": [
-    "unlimited_likes",
-    "see_who_liked",
-    "media_messaging",
-    "video_calls"
-  ]
+    "current_period_start": "2026-09-13T16:45:00Z",
+    "current_period_end": "2026-10-13T16:45:00Z"
+  }
 }
 ```
 
@@ -208,12 +224,12 @@ Authorization: Bearer <access_token>
 
 ### 5. Modification de l'Abonnement
 
-**Endpoint :** `PUT /subscriptions/current`
+**Endpoint :** `POST /subscriptions/current/modify/`
 
 **Données Requises :**
 ```json
 {
-  "new_plan_id": "hivmeet_yearly",
+  "new_plan_id": "hivmeet_annual",
   "proration": true
 }
 ```
@@ -223,30 +239,34 @@ Authorization: Bearer <access_token>
 - Mise à jour immédiate ou en fin de période
 - Gestion des crédits et débits
 - Notification des changements
+- Le choix `proration: false` est présenté comme « Changer à la prochaine
+  échéance ». Il n'est pas un contrôle de renouvellement automatique et ne
+  persiste qu'après confirmation du changement de forfait.
 
 **Réponse Succès (200) :**
 ```json
 {
-  "subscription": { /* nouvel abonnement */ },
+  "subscription_id": "provider-reference",
+  "plan_id": "hivmeet_annual",
+  "status": "active",
   "proration": {
     "credit_amount": 3.33,
-    "charge_amount": 79.99,
-    "net_amount": 76.66,
-    "effective_date": "2024-01-20T16:50:00Z"
+    "charge_amount": 0.00,
+    "currency": "EUR",
+    "prorated_period_start": "2026-09-13T16:50:00Z",
+    "prorated_period_end": "2026-10-13T00:00:00Z"
   }
 }
 ```
 
 ### 6. Annulation de l'Abonnement
 
-**Endpoint :** `POST /subscriptions/cancel`
+**Endpoint :** `POST /subscriptions/current/cancel/`
 
 **Données Requises :**
 ```json
 {
-  "cancel_immediately": false,
-  "cancellation_reason": "too_expensive",
-  "feedback": "Contenu optionnel de feedback"
+  "reason": "too_expensive"
 }
 ```
 
@@ -368,4 +388,4 @@ Authorization: Bearer <access_token>
 - Chiffrement de toutes les communications
 - Respect du RGPD pour les données utilisateur
 
-Cette documentation couvre tous les aspects des abonnements nécessaires pour une intégration frontend complète avec le backend HIVMeet et MyCoolPay. 
+Cette documentation couvre tous les aspects des abonnements nécessaires pour une intégration frontend complète avec le backend HIVMeet et MyCoolPay.

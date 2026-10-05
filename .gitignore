@@ -5,6 +5,17 @@ credentials/
 *.json
 !google-services.json
 
+# Manifests de gouvernance IA versionnés (sans secret).
+!.agents/project-map.json
+!.agents/agent-integrations.json
+!.codex/hooks.json
+!.claude/settings.json
+!.github/hooks/hivmeet-lifecycle.json
+!.vscode/hooks/hivmeet-lifecycle.json
+!.vscode/
+!.vscode/settings.json
+!.vscode/hooks/
+
 # Environment files
 .env
 .env.*
@@ -14,3 +25,11 @@ media/
 
 # Static files
 staticfiles/
+
+# Python bytecode generated while running agent-governance fixtures
+__pycache__/
+# Added by code-review-graph
+.code-review-graph/
+# Codex local configuration stays private; the governance hook is versioned.
+.codex/*
+!.codex/hooks.json

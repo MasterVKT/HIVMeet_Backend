@@ -109,10 +109,25 @@ FIREBASE_CREDENTIALS_PATH=/etc/hivmeet/firebase_credentials.json
 FIREBASE_STORAGE_BUCKET=hivmeet-f76f8.firebasestorage.app
 
 # MyCoolPay (à configurer)
-MYCOOLPAY_API_KEY=your_api_key
-MYCOOLPAY_API_SECRET=your_secret
-MYCOOLPAY_BASE_URL=https://api.mycoolpay.com/v1
-MYCOOLPAY_WEBHOOK_SECRET=your_webhook_secret
+MYCOOLPAY_PUBLIC_KEY=your_public_key
+MYCOOLPAY_PRIVATE_KEY=your_private_key
+MYCOOLPAY_BASE_URL=https://my-coolpay.com/api
+MYCOOLPAY_CALLBACK_URL=https://$DOMAIN/api/v1/webhooks/payments/mycoolpay/
+MYCOOLPAY_SUCCESS_URL=https://$DOMAIN/api/v1/subscriptions/payment-return/success/
+MYCOOLPAY_CANCEL_URL=https://$DOMAIN/api/v1/subscriptions/payment-return/cancel/
+MYCOOLPAY_FAILURE_URL=https://$DOMAIN/api/v1/subscriptions/payment-return/failure/
+MYCOOLPAY_CALLBACK_ALLOWED_IPS=15.236.140.89
+MYCOOLPAY_TRUSTED_PROXY_IPS=
+MYCOOLPAY_PAYMENT_HOSTS=my-coolpay.com
+MYCOOLPAY_ALLOWED_OPERATORS=MCP,CM_MOMO,CM_OM,CARD
+MYCOOLPAY_ENABLED_CURRENCIES=XAF,EUR
+MYCOOLPAY_DEFAULT_CURRENCY=XAF
+MYCOOLPAY_CONNECT_TIMEOUT=5
+MYCOOLPAY_READ_TIMEOUT=20
+MYCOOLPAY_STATUS_MIN_INTERVAL_SECONDS=5
+MYCOOLPAY_RECONCILIATION_MIN_AGE_SECONDS=60
+MYCOOLPAY_RECONCILIATION_MAX_AGE_HOURS=168
+MYCOOLPAY_RECONCILIATION_BATCH_SIZE=100
 
 # Email
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
@@ -302,4 +317,4 @@ echo "Status services:     sudo systemctl status gunicorn-${APP_NAME}"
 echo "Logs application:    sudo journalctl -f -u gunicorn-${APP_NAME}"
 echo "Logs Celery:         sudo journalctl -f -u celery-${APP_NAME}"
 echo "Redémarrage:         sudo systemctl restart gunicorn-${APP_NAME}"
-echo "Django shell:        cd $APP_DIR && sudo -u www-data $VENV_DIR/bin/python manage.py shell" 
+echo "Django shell:        cd $APP_DIR && sudo -u www-data $VENV_DIR/bin/python manage.py shell"

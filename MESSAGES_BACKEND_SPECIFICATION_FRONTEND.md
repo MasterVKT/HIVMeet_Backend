@@ -60,9 +60,13 @@ Authentification:
 ### 3.1 Lister conversations
 - `GET /api/v1/conversations/`
 - Query params:
-  - `page` (optionnel)
-  - `page_size` (optionnel)
-  - `status=active|archived` (archived non persiste)
+  - `page` (optionnel, defaut 1)
+  - `page_size` (optionnel, defaut 20, max 50)
+  - `status=all|unread|archived` (optionnel, defaut `all`)
+    - `all` : toutes les conversations visibles
+    - `unread` : uniquement celles dont `unread_count_for_me > 0`
+    - `archived` : renvoie une liste vide (archivage non persiste)
+    - toute autre valeur (dont `active`) renvoie **HTTP 400**
 
 Reponse 200:
 ```json
@@ -97,26 +101,22 @@ Reponse 200:
 }
 ```
 
-### 3.2 Generer URL upload media
-- `POST /api/v1/conversations/generate-media-upload-url/`
+### 3.2 Compteur global de non-lus
+- `GET /api/v1/conversations/unread-count/`
+- Auth requise. Aucun query param.
 
-Request:
+Reponse 200:
 ```json
-{
-  "file_name": "photo.jpg",
-  "content_type": "image/jpeg"
-}
+{"unread_count": 7}
 ```
 
-Response 200:
-```json
-{
-  "upload_url": "https://storage.googleapis.com/hivmeet-media/messages/...",
-  "file_path_on_storage": "messages/<user_id>/<uuid>_photo.jpg",
-  "content_type": "image/jpeg",
-  "expires_in_seconds": 900
-}
-```
+Somme serveur de `unread_count_for_me` sur **toutes** les conversations actives
+et non masquees de l'utilisateur — contrairement a une somme calculee sur la
+premiere page de `GET /api/v1/conversations/`, qui plafonne a `page_size`.
+A utiliser pour le badge global de l'onglet Messages.
+
+### 3.3 Upload média
+Le flux URL signée est supprimé. Les médias sont envoyés directement au backend via le multipart décrit en §4.3.
 
 ## 4. Endpoints Messages
 ### 4.1 Recuperer messages
@@ -154,11 +154,11 @@ Response 200:
 ```
 
 Note deterministe:
-- Les messages recus (non lus) sont automatiquement marques `READ` a la lecture.
+- La récupération est sans effet de bord ; marquer comme lu explicitement quand le message est visible.
 - Gratuit: fenetre max 50 messages.
 - Premium: historique non limite.
 
-### 4.2 Envoyer message texte/media via endpoint principal
+### 4.2 Envoyer message texte via endpoint principal
 - `POST /api/v1/conversations/{conversation_id}/messages/`
 
 Request texte:
@@ -167,16 +167,6 @@ Request texte:
   "client_message_id": "client-123",
   "content": "Bonjour!",
   "type": "text"
-}
-```
-
-Request media:
-```json
-{
-  "client_message_id": "client-124",
-  "content": "",
-  "type": "image",
-  "media_file_path_on_storage": "messages/u1/abc.jpg"
 }
 ```
 
@@ -383,20 +373,24 @@ Format pratique:
    - GET conversations
 2. Ouvrir thread:
    - GET messages
-   - auto read backend
+    - marquer explicitement les messages affichés comme lus
 3. Envoyer message:
    - POST messages avec `client_message_id`
 4. Typing indicator:
    - POST typing true/false
    - polling/refresh presence
 5. Media upload:
-   - POST generate-media-upload-url
-   - upload storage
-   - POST message media path
+    - POST multipart `messages/media/`
 
 ## 10. Limitations connues
-- Archivage conversation non persiste au niveau modele Match.
+- Archivage conversation non persiste au niveau modele Match (`status=archived` renvoie une liste vide).
 - Push FCM nouveaux messages, lecture et appel entrant relies aux flux metier backend.
 - Pas de chiffrement E2E.
 - Pas de moderation contenu/image.
 - Pas de endpoint report dans ce module.
+- `MessageReaction` existe en modele mais n'expose ni endpoint ni serializer.
+- Le JWT du WebSocket n'est valide qu'a la connexion : pas de refresh in-band,
+  le client doit se reconnecter avec un token frais (cf.
+  `docs/MESSAGES_BACKEND_WEBSOCKET_FRONTEND.md` §7.4).
+- `Call.status = initiated` est declare mais jamais utilise : `CallService.initiate_call`
+  cree directement en `ringing`.

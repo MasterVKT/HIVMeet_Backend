@@ -5,6 +5,7 @@ from rest_framework import generics, status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth import get_user_model
+from django.db.models import OuterRef, Subquery
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 import logging
@@ -32,21 +33,33 @@ class LikesReceivedView(generics.ListAPIView):
     serializer_class = PublicProfileSerializer
     
     def get_queryset(self):
-        if not is_premium_user(self.request.user):
+        user = self.request.user
+        if not is_premium_user(user):
             # Return empty queryset for non-premium users
             return Profile.objects.none()
-        
-        # Get users who liked the current user
-        return Profile.objects.filter(
-            user__in=Like.objects.filter(
-                to_user=self.request.user
-            ).values_list('from_user', flat=True)
-        ).select_related('user').order_by('-user__date_joined')
-    
+
+        # Latest like timestamp from each sender to the current user
+        latest_like = Like.objects.filter(
+            to_user=user,
+            from_user=OuterRef('user'),
+        ).order_by('-created_at').values('created_at')[:1]
+
+        # Get users who liked the current user, annotated with the like time
+        return (
+            Profile.objects.filter(
+                user__in=Like.objects.filter(
+                    to_user=user
+                ).values_list('from_user', flat=True)
+            )
+            .select_related('user')
+            .annotate(liked_at=Subquery(latest_like))
+            .order_by('-liked_at')
+        )
+
     def list(self, request, *args, **kwargs):
         if not is_premium_user(request.user):
             return premium_required_response()
-        
+
         return super().list(request, *args, **kwargs)
 
 
@@ -59,16 +72,27 @@ class SuperLikesReceivedView(generics.ListAPIView):
     serializer_class = PublicProfileSerializer
     
     def get_queryset(self):
-        if not is_premium_user(self.request.user):
+        user = self.request.user
+        if not is_premium_user(user):
             return Profile.objects.none()
-        
-        # Get users who super liked the current user
-        return Profile.objects.filter(
-            user__in=Like.objects.filter(
-                to_user=self.request.user,
-                like_type=Like.SUPER
-            ).values_list('from_user', flat=True)
-        ).select_related('user').order_by('-user__date_joined')
+
+        latest_super_like = Like.objects.filter(
+            to_user=user,
+            from_user=OuterRef('user'),
+            like_type=Like.SUPER,
+        ).order_by('-created_at').values('created_at')[:1]
+
+        return (
+            Profile.objects.filter(
+                user__in=Like.objects.filter(
+                    to_user=user,
+                    like_type=Like.SUPER,
+                ).values_list('from_user', flat=True)
+            )
+            .select_related('user')
+            .annotate(liked_at=Subquery(latest_super_like))
+            .order_by('-liked_at')
+        )
     
     def list(self, request, *args, **kwargs):
         if not is_premium_user(request.user):

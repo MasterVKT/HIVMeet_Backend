@@ -4,7 +4,13 @@ Admin configuration for subscriptions app.
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from .models import SubscriptionPlan, Subscription, Transaction, WebhookEvent
+from .models import (
+    SubscriptionPlan,
+    Subscription,
+    Transaction,
+    WebhookEvent,
+    PaymentTransaction,
+)
 
 
 @admin.register(SubscriptionPlan)
@@ -137,6 +143,31 @@ class TransactionAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
     
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(PaymentTransaction)
+class PaymentTransactionAdmin(admin.ModelAdmin):
+    list_display = [
+        'app_transaction_ref', 'provider_transaction_ref', 'status',
+        'amount', 'currency', 'fulfilled_at', 'created_at',
+    ]
+    list_filter = ['status', 'currency', 'created_at', 'fulfilled_at']
+    search_fields = [
+        'app_transaction_ref', 'provider_transaction_ref',
+        'user__email', 'plan__plan_id',
+    ]
+    readonly_fields = [
+        'id', 'app_transaction_ref', 'provider_transaction_ref',
+        'user', 'plan', 'amount', 'currency', 'status', 'payment_url',
+        'provider_message', 'paid_at', 'fulfilled_at', 'last_checked_at',
+        'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
     def has_change_permission(self, request, obj=None):
         return False
 

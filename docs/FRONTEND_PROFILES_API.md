@@ -4,12 +4,20 @@
 
 Le module Profiles gère les profils utilisateur complets, incluant les informations personnelles, les photos, les préférences de recherche, la géolocalisation et le système de vérification d'identité.
 
+> **Contrat Phase 2.** La source API de référence est
+> [API_DOCUMENTATION.md](API_DOCUMENTATION.md), complétée par le contrat
+> [KYC v1](kyc/KYC_V1_CONTRACT.openapi.yaml). Les anciennes descriptions
+> d'URLs Firebase/directes et de routes sans `/me/` dans ce document sont
+> remplacées par les sections photo et KYC ci-dessous. Ne jamais persister une
+> URL de média, une URL PUT KYC, un code de défi ou une référence de stockage.
+
 ## 🏗️ Architecture des Profils
 
 ### Structure des Données
 **Principe :**
 - Profil utilisateur séparé des données d'authentification
-- Photos stockées dans Firebase Storage avec URLs
+- Photos privées stockées par le backend; seules des routes API authentifiées
+  sont retournées, jamais une URL directe de bucket
 - Géolocalisation pour le matching par proximité
 - Système de vérification d'identité multi-étapes
 - Préférences de recherche personnalisables
@@ -55,8 +63,8 @@ Authorization: Bearer <access_token>
   "photos": [
     {
       "id": "uuid",
-      "photo_url": "https://storage.googleapis.com/...",
-      "thumbnail_url": "https://storage.googleapis.com/...",
+      "photo_url": "/api/v1/user-profiles/media/photos/<photo_id>/main/",
+      "thumbnail_url": "/api/v1/user-profiles/media/photos/<photo_id>/thumbnail/",
       "is_main": true,
       "order": 0,
       "caption": "Photo principale"
@@ -133,7 +141,7 @@ Authorization: Bearer <access_token>
 
 ### 3. Récupération d'un Profil par ID
 
-**Endpoint :** `GET /user-profiles/{profile_id}`
+**Endpoint :** `GET /api/v1/user-profiles/{user_id}/`
 
 **Principe d'Implémentation :**
 - Vérifier que l'utilisateur n'est pas bloqué
@@ -151,8 +159,8 @@ Authorization: Bearer <access_token>
   "distance_km": 12,
   "photos": [
     {
-      "photo_url": "https://...",
-      "thumbnail_url": "https://...",
+      "photo_url": "/api/v1/user-profiles/media/photos/<photo_id>/main/",
+      "thumbnail_url": "/api/v1/user-profiles/media/photos/<photo_id>/thumbnail/",
       "is_main": true
     }
   ],
@@ -173,13 +181,13 @@ Authorization: Bearer <access_token>
 
 ### 4. Upload de Photo
 
-**Endpoint :** `POST /user-profiles/photos`
+**Endpoint :** `POST /api/v1/user-profiles/me/photos/`
 
 **Format :** `multipart/form-data`
 
 **Données Requises :**
 ```
-photo: File (JPG/PNG, max 5MB, min 400x400px)
+file: File (JPG/PNG, max 5 MiB)
 caption: String (optionnel, max 200 caractères)
 is_main: Boolean (optionnel)
 ```
@@ -187,23 +195,19 @@ is_main: Boolean (optionnel)
 **Principe d'Implémentation :**
 1. Valider le fichier côté frontend (format, taille, dimensions)
 2. Compresser/redimensionner si nécessaire
-3. Upload vers le backend qui gère le stockage Firebase
+3. Upload vers le backend qui gère le stockage privé
 4. Le backend génère automatiquement les thumbnails
-5. Retourne les URLs des images
+5. Retourne des routes API authentifiées, sans URL de bucket ni clé de stockage
 
 **Réponse Succès (201) :**
 ```json
 {
-  "photo": {
-    "id": "uuid",
-    "photo_url": "https://storage.googleapis.com/...",
-    "thumbnail_url": "https://storage.googleapis.com/...",
-    "is_main": false,
-    "order": 2,
-    "caption": "Photo de voyage",
-    "is_approved": true
-  },
-  "message": "Photo uploaded successfully"
+  "photo_id": "uuid",
+  "url": "/api/v1/user-profiles/media/photos/<photo_id>/main/",
+  "thumbnail_url": "/api/v1/user-profiles/media/photos/<photo_id>/thumbnail/",
+  "is_main": false,
+  "caption": "Photo de voyage",
+  "uploaded_at": "2026-10-02T10:00:00Z"
 }
 ```
 
@@ -213,10 +217,13 @@ is_main: Boolean (optionnel)
 - Gérer la rotation automatique selon l'EXIF
 - Limiter à 6 photos maximum par profil
 - Permettre la réorganisation par drag & drop
+- Lire une route photo avec l'authentification normale; elle est refusée pour
+  la photo d'autrui dès que le KYC n'est plus actif. Ne pas la stocker dans un
+  cache persistant ou des diagnostics.
 
 ### 5. Mise à Jour des Photos
 
-**Endpoint :** `PUT /user-profiles/photos/{photo_id}`
+**Endpoint :** `PUT /api/v1/user-profiles/me/photos/{photo_id}/`
 
 **Données Modifiables :**
 ```json
@@ -234,7 +241,7 @@ is_main: Boolean (optionnel)
 
 ### 6. Suppression de Photo
 
-**Endpoint :** `DELETE /user-profiles/photos/{photo_id}`
+**Endpoint :** `DELETE /api/v1/user-profiles/me/photos/{photo_id}/`
 
 **Logique d'Implémentation Frontend :**
 - Demander confirmation avant suppression
@@ -243,47 +250,23 @@ is_main: Boolean (optionnel)
 
 ## ✅ Système de Vérification
 
-### 7. Demande de Vérification
-
-**Endpoint :** `POST /user-profiles/verification/request`
-
-**Principe d'Implémentation :**
-1. Utilisateur initie le processus de vérification
-2. Backend génère un code unique pour le selfie
-3. Utilisateur doit fournir : document d'identité, document médical, selfie avec code
-4. Processus de modération par l'équipe
-
-**Réponse Succès (201) :**
-```json
-{
-  "verification_id": "uuid",
-  "verification_code": "ABC123",
-  "status": "pending_documents",
-  "instructions": {
-    "id_document": "Téléchargez une photo claire de votre pièce d'identité",
-    "medical_document": "Téléchargez un document médical récent",
-    "selfie": "Prenez un selfie en tenant un papier avec le code ABC123"
-  }
-}
-```
-
-### 8. Upload de Documents de Vérification
-
-**Endpoint :** `POST /user-profiles/verification/upload`
-
-**Données Requises :**
-```
-document_type: "id_document|medical_document|selfie"
-file: File (image)
-verification_id: UUID
-```
-
-**Logique d'Implémentation Frontend :**
-- Guider l'utilisateur étape par étape
-- Valider la qualité des images (netteté, lisibilité)
-- Crypter les documents avant envoi
-- Afficher le statut de progression
-- Permettre le re-upload en cas de problème
+> **Contrat KYC v1 canonique :** utiliser exclusivement
+> [KYC API v1](kyc/KYC_V1_CONTRACT.openapi.yaml) et le
+> [cadrage de phase 0](kyc/KYC_PHASE_0_GOVERNANCE.md). Le serveur expose
+> `GET /me/verification/` sans effet de bord, puis `POST start/`,
+> `POST upload-intents/`, `POST upload-intents/complete/` et `POST submit/`.
+> L'URL PUT émise par une intention est éphémère, ne porte pas de bearer token
+> et ne doit jamais être journalisée, analysée, notifiée ou mise en cache.
+> Le client ne transmet que les identifiants opaques d'upload à `complete` et
+> `submit`; il ne transmet jamais de chemin de stockage. Les routes historiques
+> `generate-upload-url/` et `submit-documents/` répondent `410`
+> `kyc_legacy_endpoint_deprecated` et ne doivent jamais être intégrées.
+>
+> Seuls une identité officielle, un document médical ou sérologique de moins
+> de 90 jours et un selfie au défi à usage unique sont admis. La revue est
+> humaine et interne, sans biométrie ni fournisseur externe. La réalisation
+> Flutter complète appartient à la phase 4; ce guide ne constitue pas une
+> activation de production.
 
 ## 🎯 Préférences et Paramètres
 
@@ -441,10 +424,11 @@ relationship_type: "long_term"
 - Anonymisation des données d'analyse
 - Respect du RGPD et des réglementations locales
 
-### Modération Automatique
+### Modération de contenu
 - Détection de contenu inapproprié dans les photos
 - Filtrage des mots offensants dans la bio
-- Validation des documents d'identité par IA
+- Aucun traitement KYC automatisé, biométrique ou par fournisseur externe ;
+  la décision KYC relève exclusivement d'une revue humaine interne.
 - Signalement automatique des comportements suspects
 
 ## 📱 Optimisations Mobile
@@ -461,4 +445,4 @@ relationship_type: "long_term"
 - Adaptation à différentes tailles d'écran
 - Mode sombre/clair automatique
 
-Cette documentation couvre tous les aspects de la gestion des profils nécessaires pour une intégration frontend complète avec le backend HIVMeet. 
+Cette documentation couvre tous les aspects de la gestion des profils nécessaires pour une intégration frontend complète avec le backend HIVMeet.

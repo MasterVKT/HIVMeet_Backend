@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple, TYPE_CHECKING
 import logging
 
 from .models import Resource, Category, ResourceFavorite, FeedPost, FeedPostLike, FeedPostComment
+from subscriptions.utils import is_premium_user
 
 if TYPE_CHECKING:
     from authentication.models import User as UserType
@@ -41,7 +42,7 @@ class ResourceService:
         query = Resource.objects.filter(is_published=True)
         
         # Filter premium content for non-premium users
-        if not user.is_premium:
+        if not is_premium_user(user):
             query = query.filter(is_premium=False)
         
         # Apply filters
@@ -115,7 +116,7 @@ class ResourceService:
                 )
             ).get(id=resource_id, is_published=True)
               # Check premium access
-            if resource.is_premium and not user.is_premium:
+            if resource.is_premium and not is_premium_user(user):
                 return None
             
             # Increment view count
@@ -135,7 +136,7 @@ class ResourceService:
         try:
             resource = Resource.objects.get(id=resource_id, is_published=True)
               # Check premium access
-            if resource.is_premium and not user.is_premium:
+            if resource.is_premium and not is_premium_user(user):
                 return False, False
             
             favorite, created = ResourceFavorite.objects.get_or_create(

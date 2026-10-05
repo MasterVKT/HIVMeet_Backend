@@ -26,12 +26,13 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         required=True,
         style={'input_type': 'password'}
     )
+    gender = serializers.ChoiceField(choices=('male', 'female'), write_only=True)
     
     class Meta:
         model = User
         fields = [
             'email', 'password', 'password_confirm',
-            'birth_date', 'display_name', 'phone_number'
+            'birth_date', 'display_name', 'phone_number', 'gender'
         ]
         extra_kwargs = {
             'email': {'required': True},
@@ -103,7 +104,15 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create user with validated data."""
+        gender = validated_data.pop('gender')
         user = User.objects.create_user(**validated_data)
+        # The post-save signal created the related profile in this transaction.
+        user.profile.gender = gender
+        user.profile.gender_confirmation_required = False
+        user.profile.legacy_gender = ''
+        user.profile.save(update_fields=[
+            'gender', 'gender_confirmation_required', 'legacy_gender',
+        ])
         return user
 
 
@@ -133,16 +142,17 @@ class UserSerializer(serializers.ModelSerializer):
     """
     age = serializers.ReadOnlyField()
     profile_complete = serializers.SerializerMethodField()
+    is_premium = serializers.SerializerMethodField()
     
     class Meta:
         model = User
         fields = [
             'id', 'email', 'display_name', 'birth_date', 'age',
-            'is_verified', 'is_premium', 'verification_status',
+            'is_verified', 'is_premium', 'premium_until', 'verification_status',
             'profile_complete', 'last_active', 'date_joined'
         ]
         read_only_fields = [
-            'id', 'email', 'is_verified', 'is_premium',
+            'id', 'email', 'is_verified', 'is_premium', 'premium_until',
             'verification_status', 'last_active', 'date_joined'
         ]
     
@@ -150,6 +160,10 @@ class UserSerializer(serializers.ModelSerializer):
         """Check if user has completed their profile."""
         # This will be properly implemented when we have the Profile model
         return hasattr(obj, 'profile') and obj.profile is not None
+
+    def get_is_premium(self, obj):
+        from subscriptions.utils import is_premium_user
+        return is_premium_user(obj)
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):

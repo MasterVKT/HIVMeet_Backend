@@ -1,24 +1,25 @@
-"""
-Interaction history views for matching app.
-"""
-from rest_framework import status, permissions
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.response import Response
-from rest_framework.pagination import PageNumberPagination
-from django.contrib.auth import get_user_model
-from django.utils.translation import gettext_lazy as _
+"""Privacy-safe, paginated interaction history endpoints."""
+
+from __future__ import annotations
+
+import unicodedata
+
 from django.db import transaction
-from django.db.models import Q, Count, Case, When
+from django.db.models import Q
 from django.utils import timezone
-import logging
+from django.utils.translation import gettext_lazy as _
+from rest_framework import permissions, status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.response import Response
 
-from .models import InteractionHistory, Match, DailyLikeLimit
-from .serializers import InteractionHistorySerializer, InteractionStatsSerializer
-from .interaction_service import InteractionService
-from subscriptions.utils import get_premium_limits
-
-logger = logging.getLogger('hivmeet.matching')
-User = get_user_model()
+from .daily_likes_service import DailyLikesService
+from .models import InteractionHistory, Match
+from .serializers import (
+    BulkRevokeInteractionsSerializer,
+    InteractionHistorySerializer,
+    InteractionStatsSerializer,
+)
 
 
 class InteractionHistoryPagination(PageNumberPagination):
@@ -27,267 +28,381 @@ class InteractionHistoryPagination(PageNumberPagination):
     max_page_size = 100
 
 
+def _normalise_search(value: str) -> str:
+    """Case- and accent-insensitive text normalization without a DB extension."""
+    decomposed = unicodedata.normalize('NFKD', value.casefold())
+    return ''.join(char for char in decomposed if not unicodedata.combining(char))
+
+
+def _query_param_match_state(request) -> str:
+    """Read the explicit Phase 5 filter while accepting the legacy boolean."""
+    value = request.query_params.get('match_state')
+    if value is None:
+        return (
+            BulkRevokeInteractionsSerializer.MATCH_MATCHED
+            if request.query_params.get('matched_only', '').lower() == 'true'
+            else BulkRevokeInteractionsSerializer.MATCH_ALL
+        )
+    if value not in {
+        BulkRevokeInteractionsSerializer.MATCH_ALL,
+        BulkRevokeInteractionsSerializer.MATCH_MATCHED,
+        BulkRevokeInteractionsSerializer.MATCH_UNMATCHED,
+    }:
+        raise ValueError('invalid_match_state')
+    return value
+
+
+def _active_matches_by_target(user, target_ids=None):
+    matches = Match.objects.filter(
+        Q(user1=user) | Q(user2=user), status=Match.ACTIVE
+    )
+    if target_ids is not None:
+        target_ids = list(target_ids)
+        if not target_ids:
+            return {}
+        matches = matches.filter(
+            Q(user1_id__in=target_ids) | Q(user2_id__in=target_ids)
+        )
+    return {
+        (match.user2_id if match.user1_id == user.id else match.user1_id): match.id
+        for match in matches.only('id', 'user1_id', 'user2_id')
+    }
+
+
+def _history_queryset(
+    *,
+    user,
+    history_type: str,
+    query: str = '',
+    match_state: str = 'all',
+    include_revoked=False,
+    selectable_only=False,
+):
+    if history_type == BulkRevokeInteractionsSerializer.HISTORY_LIKES:
+        queryset = InteractionHistory.get_user_likes(user, include_revoked=include_revoked)
+    else:
+        queryset = InteractionHistory.get_user_passes(user, include_revoked=include_revoked)
+
+    if match_state != BulkRevokeInteractionsSerializer.MATCH_ALL:
+        matched_target_ids = _active_matches_by_target(user).keys()
+        if match_state == BulkRevokeInteractionsSerializer.MATCH_MATCHED:
+            queryset = queryset.filter(target_user_id__in=matched_target_ids)
+        else:
+            queryset = queryset.exclude(target_user_id__in=matched_target_ids)
+
+    # A like that produced an active match remains visible in history, but it
+    # is not selectable for a revoke. Excluding it here lets "select all"
+    # mean every selectable result without turning it into a partial action.
+    if selectable_only:
+        queryset = queryset.filter(is_revoked=False)
+        if history_type == BulkRevokeInteractionsSerializer.HISTORY_LIKES:
+            queryset = queryset.exclude(
+                target_user_id__in=_active_matches_by_target(user).keys()
+            )
+
+    query = query.strip()
+    if query:
+        # Django's portable icontains does not fold accents on every supported
+        # database. This still keeps filtering, sorting and pagination server-side.
+        needle = _normalise_search(query)
+        # values_list removes the inherited profile join from the history
+        # queryset. Combining that inherited select_related with `only` would
+        # defer the same relation and crash before the request is paginated.
+        candidate_ids = [
+            interaction_id
+            for interaction_id, display_name in queryset.values_list(
+                'id', 'target_user__display_name'
+            )
+            if needle in _normalise_search(display_name)
+        ]
+        queryset = queryset.filter(id__in=candidate_ids)
+
+    return queryset.order_by('-created_at', '-id')
+
+
+def _serialize_history(entries, user, request):
+    entries = list(entries)
+    match_ids_by_target = _active_matches_by_target(
+        user, {entry.target_user_id for entry in entries}
+    )
+    return InteractionHistorySerializer(
+        entries,
+        many=True,
+        context={
+            'request': request,
+            'active_match_ids_by_target': match_ids_by_target,
+        },
+    ).data
+
+
+def _history_response(request, history_type: str):
+    try:
+        match_state = _query_param_match_state(request)
+    except ValueError:
+        return Response(
+            {'error': 'invalid_match_state', 'message': _('The match filter is invalid.')},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    query = request.query_params.get('q', '')
+    if len(query) > 100:
+        return Response(
+            {'error': 'invalid_query', 'message': _('The search is too long.')},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    include_revoked = request.query_params.get('include_revoked', 'false').lower() == 'true'
+    queryset = _history_queryset(
+        user=request.user,
+        history_type=history_type,
+        query=query,
+        match_state=match_state,
+        include_revoked=include_revoked,
+    )
+    paginator = InteractionHistoryPagination()
+    page = paginator.paginate_queryset(queryset, request)
+    response = paginator.get_paginated_response(
+        _serialize_history(page, request.user, request)
+    )
+    response.data['selectable_count'] = _history_queryset(
+        user=request.user,
+        history_type=history_type,
+        query=query,
+        match_state=match_state,
+        include_revoked=include_revoked,
+        selectable_only=True,
+    ).count()
+    return response
+
+
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def get_my_likes(request):
-    """
-    Get list of profiles the user has liked.
-    
-    GET /api/v1/discovery/interactions/my-likes
-    
-    Query params:
-    - page: integer (default: 1)
-    - page_size: integer (default: 20, max: 100)
-    - matched_only: boolean (default: false) - If true, return only likes with active matches
-    - include_revoked: boolean (default: false)
-    - order_by: string (default: 'recent') - Options: 'recent', 'oldest'
-    """
-    logger.info(f"📖 User {request.user.id} requesting likes history")
-    
-    # Get query parameters
-    matched_only = request.query_params.get('matched_only', 'false').lower() == 'true'
-    include_revoked = request.query_params.get('include_revoked', 'false').lower() == 'true'
-    order_by = request.query_params.get('order_by', 'recent')
-    
-    logger.info(f"   matched_only={matched_only}, include_revoked={include_revoked}, order_by={order_by}")
-    
-    # Get likes
-    interactions = InteractionHistory.get_user_likes(
-        user=request.user,
-        include_revoked=include_revoked
-    )
-    
-    # Get IDs of users with active matches (used for filtering)
-    matched_user_ids = Match.objects.filter(
-        Q(user1=request.user) | Q(user2=request.user),
-        status=Match.ACTIVE
-    ).values_list(
-        # Get the other user's ID in each match (not the request user)
-        Case(
-            When(user1=request.user, then='user2_id'),
-            default='user1_id'
-        ),
-        flat=True,
-    )
-    # Evaluate to list immediately to avoid stale data
-    matched_ids = set(list(matched_user_ids))
-    
-    logger.info(f"   Active matches found: {len(matched_ids)} users")
-    
-    # Filter based on matched_only parameter:
-    # - matched_only=true: return ONLY likes with active matches
-    # - matched_only=false: return ALL likes (default behavior)
-    if matched_only:
-        if matched_ids:
-            # matched_only=true AND there ARE matches: return ONLY matched likes
-            interactions = interactions.filter(target_user_id__in=matched_ids)
-            logger.info(f"   Filtered to {len(matched_ids)} matched likes")
-        else:
-            # matched_only=true but NO matches: return empty queryset
-            interactions = interactions.none()
-            logger.info(f"   No matches found, returning empty list")
-    # else: matched_only=false: return ALL likes, no filtering
-    
-    # Always order by created_at to ensure deterministic pagination
-    if order_by == 'oldest':
-        interactions = interactions.order_by('created_at')
-    else:
-        interactions = interactions.order_by('-created_at')
-    
-    # Paginate
-    paginator = InteractionHistoryPagination()
-    page = paginator.paginate_queryset(interactions, request)
-    
-    # Serialize
-    serializer = InteractionHistorySerializer(
-        page,
-        many=True,
-        context={'request': request}
-    )
-    
-    logger.info(f"✅ Returning {len(serializer.data)} likes for user {request.user.id} (matched_only={matched_only})")
-    
-    return paginator.get_paginated_response(serializer.data)
+    """GET history with q and match_state=all|matched|unmatched."""
+    return _history_response(request, BulkRevokeInteractionsSerializer.HISTORY_LIKES)
 
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def get_my_passes(request):
-    """
-    Get list of profiles the user has passed/disliked.
-    
-    GET /api/v1/discovery/interactions/my-passes
-    
-    Query params:
-    - page: integer (default: 1)
-    - page_size: integer (default: 20, max: 100)
-    - include_revoked: boolean (default: false)
-    - order_by: string (default: 'recent')
-    """
-    logger.info(f"📖 User {request.user.id} requesting passes history")
-    
-    # Get query parameters
-    include_revoked = request.query_params.get('include_revoked', 'false').lower() == 'true'
-    order_by = request.query_params.get('order_by', 'recent')
-    
-    # Get passes
-    interactions = InteractionHistory.get_user_passes(
-        user=request.user,
-        include_revoked=include_revoked
+    """GET pass history with the same searchable, paginated contract."""
+    return _history_response(request, BulkRevokeInteractionsSerializer.HISTORY_PASSES)
+
+
+def _issue(interaction_id, code, *, profile_user_id=None, match_id=None):
+    payload = {'interaction_id': str(interaction_id), 'code': code}
+    if profile_user_id is not None:
+        payload['profile_user_id'] = str(profile_user_id)
+    if match_id is not None:
+        payload['match_id'] = str(match_id)
+    return payload
+
+
+def _revoke_locked_interactions(*, user, interaction_ids, history_type=None):
+    """Validate every item first, then perform one all-or-nothing update."""
+    locked = list(
+        InteractionHistory.objects.select_for_update()
+        .filter(user=user, id__in=interaction_ids)
+        .select_related('target_user')
     )
-    
-    # Ordering
-    if order_by == 'oldest':
-        interactions = interactions.order_by('created_at')
-    else:
-        interactions = interactions.order_by('-created_at')
-    
-    # Paginate
-    paginator = InteractionHistoryPagination()
-    page = paginator.paginate_queryset(interactions, request)
-    
-    # Serialize
-    serializer = InteractionHistorySerializer(
-        page,
-        many=True,
-        context={'request': request}
+    by_id = {interaction.id: interaction for interaction in locked}
+    issues = [
+        _issue(interaction_id, 'not_found')
+        for interaction_id in interaction_ids
+        if interaction_id not in by_id
+    ]
+
+    expected_types = (
+        {InteractionHistory.LIKE, InteractionHistory.SUPER_LIKE}
+        if history_type == BulkRevokeInteractionsSerializer.HISTORY_LIKES
+        else {InteractionHistory.DISLIKE}
+        if history_type == BulkRevokeInteractionsSerializer.HISTORY_PASSES
+        else None
     )
-    
-    logger.info(f"✅ Returning {len(serializer.data)} passes for user {request.user.id}")
-    
-    return paginator.get_paginated_response(serializer.data)
+    active_matches = _active_matches_by_target(
+        user, {interaction.target_user_id for interaction in locked}
+    )
+    for interaction in locked:
+        if expected_types is not None and interaction.interaction_type not in expected_types:
+            issues.append(
+                _issue(
+                    interaction.id,
+                    'history_type_mismatch',
+                    profile_user_id=interaction.target_user_id,
+                )
+            )
+        elif interaction.is_revoked:
+            issues.append(
+                _issue(
+                    interaction.id,
+                    'already_revoked',
+                    profile_user_id=interaction.target_user_id,
+                )
+            )
+        elif (
+            interaction.interaction_type
+            in (InteractionHistory.LIKE, InteractionHistory.SUPER_LIKE)
+            and interaction.target_user_id in active_matches
+        ):
+            issues.append(
+                _issue(
+                    interaction.id,
+                    'active_match_requires_unmatch',
+                    profile_user_id=interaction.target_user_id,
+                    match_id=active_matches[interaction.target_user_id],
+                )
+            )
+
+    if issues:
+        return [], issues
+
+    now = timezone.now()
+    InteractionHistory.objects.filter(id__in=interaction_ids).update(
+        is_revoked=True,
+        revoked_at=now,
+    )
+    return locked, []
 
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 @transaction.atomic
 def revoke_interaction(request, interaction_id):
-    """
-    Revoke/cancel an interaction to allow the profile to reappear in discovery.
-    
-    POST /api/v1/discovery/interactions/{interaction_id}/revoke
-    """
-    logger.info(f"🔄 User {request.user.id} attempting to revoke interaction {interaction_id}")
-    
-    try:
-        interaction = InteractionHistory.objects.get(
-            id=interaction_id,
-            user=request.user
+    """Legacy single revoke implemented through the same atomic policy."""
+    revoked, issues = _revoke_locked_interactions(
+        user=request.user,
+        interaction_ids=[interaction_id],
+    )
+    if issues:
+        issue = issues[0]
+        code = issue['code']
+        if code == 'active_match_requires_unmatch':
+            return Response(
+                {
+                    'error': 'cannot_revoke_match',
+                    'code': 'cannot_revoke_match',
+                    'message': _('Cannot cancel a like that resulted in an active match.'),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        response_status = (
+            status.HTTP_404_NOT_FOUND if code == 'not_found' else status.HTTP_400_BAD_REQUEST
         )
-    except InteractionHistory.DoesNotExist:
-        logger.warning(f"❌ Interaction {interaction_id} not found for user {request.user.id}")
-        return Response({
-            'error': 'interaction_not_found',
-            'message': _("This interaction doesn't exist or doesn't belong to you")
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    # Check if already revoked
-    if interaction.is_revoked:
-        logger.warning(f"⚠️  Interaction {interaction_id} already revoked")
-        return Response({
-            'error': 'already_revoked',
-            'message': _('This interaction has already been cancelled')
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Check if it's a like that resulted in an active match
-    if interaction.interaction_type in [InteractionHistory.LIKE, InteractionHistory.SUPER_LIKE]:
-        active_match = Match.objects.filter(
-            Q(user1=request.user, user2=interaction.target_user) |
-            Q(user1=interaction.target_user, user2=request.user),
-            status=Match.ACTIVE
-        ).exists()
-        
-        if active_match:
-            logger.warning(f"⚠️  Cannot revoke interaction {interaction_id} - active match exists")
-            return Response({
-                'error': 'cannot_revoke_match',
-                'message': _('Cannot cancel a like that resulted in an active match')
-            }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Revoke the interaction
-    interaction.revoke()
-    
-    logger.info(f"✅ Interaction {interaction_id} revoked successfully")
-    
-    # TODO: Log analytics event if analytics service is available
-    
-    return Response({
-        'status': 'revoked',
-        'interaction_id': str(interaction.id),
-        'message': _("The interaction has been cancelled. This profile may reappear in your discovery.")
-    }, status=status.HTTP_200_OK)
+        return Response(
+            {'error': code, 'code': code, 'message': _('This interaction cannot be cancelled.')},
+            status=response_status,
+        )
+
+    return Response(
+        {
+            'status': 'revoked',
+            'interaction_id': str(revoked[0].id),
+            'message': _('The interaction has been cancelled. This profile may reappear in discovery.'),
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@transaction.atomic
+def revoke_interactions_bulk(request):
+    """Atomically revoke selected rows or every result of the active filter."""
+    serializer = BulkRevokeInteractionsSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    values = serializer.validated_data
+    history_type = values['history_type']
+
+    if values['select_all']:
+        interaction_ids = list(
+            _history_queryset(
+                user=request.user,
+                history_type=history_type,
+                query=values.get('q', ''),
+                match_state=values['match_state'],
+                include_revoked=values['include_revoked'],
+                selectable_only=True,
+            )
+            .prefetch_related(None)
+            .values_list('id', flat=True)
+        )
+    else:
+        interaction_ids = values['interaction_ids']
+
+    if not interaction_ids:
+        return Response(
+            {
+                'revoked_count': 0,
+                'revoked_interaction_ids': [],
+                'message': _('No interaction matched this selection.'),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    revoked, issues = _revoke_locked_interactions(
+        user=request.user,
+        interaction_ids=interaction_ids,
+        history_type=history_type,
+    )
+    if issues:
+        return Response(
+            {
+                'error': 'bulk_revoke_not_possible',
+                'message': _('No interaction was cancelled because the selection changed.'),
+                'reasons': issues,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    return Response(
+        {
+            'revoked_count': len(revoked),
+            'revoked_interaction_ids': [str(interaction.id) for interaction in revoked],
+            'message': _('The selected interactions have been cancelled.'),
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def get_interaction_stats(request):
-    """
-    Get statistics about user's interactions.
-    
-    GET /api/v1/discovery/interactions/stats
-    """
-    logger.info(f"📊 User {request.user.id} requesting interaction stats")
-    
+    """Return aggregate interaction statistics without exposing other users."""
     user = request.user
-    today = timezone.now().date()
-    
-    # Count interactions by type
     likes_count = InteractionHistory.objects.filter(
-        user=user,
-        interaction_type=InteractionHistory.LIKE,
-        is_revoked=False
+        user=user, interaction_type=InteractionHistory.LIKE, is_revoked=False
     ).count()
-    
     super_likes_count = InteractionHistory.objects.filter(
-        user=user,
-        interaction_type=InteractionHistory.SUPER_LIKE,
-        is_revoked=False
+        user=user, interaction_type=InteractionHistory.SUPER_LIKE, is_revoked=False
     ).count()
-    
     dislikes_count = InteractionHistory.objects.filter(
-        user=user,
-        interaction_type=InteractionHistory.DISLIKE,
-        is_revoked=False
+        user=user, interaction_type=InteractionHistory.DISLIKE, is_revoked=False
     ).count()
-    
-    # Count matches
     matches_count = Match.objects.filter(
-        Q(user1=user) | Q(user2=user),
-        status=Match.ACTIVE
+        Q(user1=user) | Q(user2=user), status=Match.ACTIVE
     ).count()
-    
-    # Calculate like-to-match ratio
-    total_likes = likes_count + super_likes_count
-    like_to_match_ratio = matches_count / total_likes if total_likes > 0 else 0
-    
-    # Today's interactions
     interactions_today = InteractionHistory.objects.filter(
-        user=user,
-        created_at__date=today
+        user=user, created_at__date=timezone.localdate()
     ).count()
-    
-    # Daily limits
-    try:
-        limits = get_premium_limits(user)
-        daily_limit = limits['limits']['likes']['max'] if user.is_premium else 100
-    except:
-        daily_limit = 100 if user.is_premium else 30
-    
-    remaining_today = max(0, daily_limit - interactions_today)
-    
-    stats = {
-        'total_likes': likes_count,
-        'total_super_likes': super_likes_count,
-        'total_dislikes': dislikes_count,
-        'total_matches': matches_count,
-        'like_to_match_ratio': round(like_to_match_ratio, 2),
-        'total_interactions_today': interactions_today,
-        'daily_limit': daily_limit,
-        'remaining_today': remaining_today
-    }
-    
-    serializer = InteractionStatsSerializer(stats)
-    
-    logger.info(f"✅ Stats returned for user {request.user.id}")
-    
-    return Response(serializer.data, status=status.HTTP_200_OK)
+    total_likes = likes_count + super_likes_count
+    daily_limit = DailyLikesService.get_user_daily_limit(user)
+    remaining_today = (
+        daily_limit
+        if daily_limit == DailyLikesService.UNLIMITED
+        else max(0, daily_limit - interactions_today)
+    )
+    return Response(
+        InteractionStatsSerializer(
+            {
+                'total_likes': likes_count,
+                'total_super_likes': super_likes_count,
+                'total_dislikes': dislikes_count,
+                'total_matches': matches_count,
+                'like_to_match_ratio': round(matches_count / total_likes, 2)
+                if total_likes
+                else 0,
+                'total_interactions_today': interactions_today,
+                'daily_limit': daily_limit,
+                'remaining_today': remaining_today,
+            }
+        ).data
+    )

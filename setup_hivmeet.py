@@ -257,10 +257,10 @@ FIREBASE_CREDENTIALS_PATH=credentials/hivmeet_firebase_credentials.json
 FIREBASE_STORAGE_BUCKET=hivmeet-f76f8.firebasestorage.app
 
 # MyCoolPay Configuration (À configurer avec vos vraies clés)
-MYCOOLPAY_API_KEY=your_api_key_here
-MYCOOLPAY_API_SECRET=your_secret_here
-MYCOOLPAY_BASE_URL=https://api.mycoolpay.com/v1
-MYCOOLPAY_WEBHOOK_SECRET=your_webhook_secret_here
+MYCOOLPAY_PUBLIC_KEY=your_public_key_here
+MYCOOLPAY_PRIVATE_KEY=your_private_key_here
+MYCOOLPAY_BASE_URL=https://my-coolpay.com/api
+MYCOOLPAY_CALLBACK_ALLOWED_IPS=15.236.140.89
 
 # Email Configuration
 EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
@@ -348,4 +348,4 @@ def main():
 
 if __name__ == '__main__':
     from datetime import datetime
-    main() 
+    main()

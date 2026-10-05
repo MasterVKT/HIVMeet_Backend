@@ -1,3 +1,13 @@
+# ARCHIVE KYC v0 — NE PAS UTILISER COMME CONTRAT
+
+Les sections KYC de ce document historique sont remplacées par
+`docs/kyc/KYC_V1_CONTRACT.openapi.yaml` et
+`docs/kyc/KYC_PHASE_0_GOVERNANCE.md`. Les routes historiques
+`generate-upload-url/` et `submit-documents/` retournent `410`
+`kyc_legacy_endpoint_deprecated`; aucun chemin de stockage, URL de lecture ou
+code selfie ne peut être dérivé de cette archive. Les autres sections demeurent
+un contexte historique, non une source de contrat KYC.
+
 Document de Spécification de l'Interface Frontend-Backend - HIVMeet
 1. Introduction
 1.1. Objectif de ce Document

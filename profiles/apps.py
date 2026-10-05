@@ -9,3 +9,7 @@ class ProfilesConfig(AppConfig):
 
     def ready(self):
         import profiles.signals  # noqa
+        import profiles.checks  # noqa
+        # Import tasks so Celery autodiscovers them even if no other module
+        # references them explicitly.
+        import profiles.tasks  # noqa

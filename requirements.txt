@@ -45,6 +45,7 @@ cryptography==41.0.7  # For webhook signature verification
 
 # Storage
 Pillow==10.1.0
+pypdf>=4.3,<6  # Strict PDF parsing for private KYC document validation
 boto3==1.29.7  # For AWS S3 if needed
 django-storages==1.14.2
 

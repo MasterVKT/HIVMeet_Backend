@@ -1,7 +1,7 @@
 """
 Matching models for HIVMeet.
 """
-from django.db import models
+from django.db import IntegrityError, models, transaction
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
@@ -10,6 +10,14 @@ import uuid
 from datetime import timedelta
 
 User = get_user_model()
+
+
+class InteractionActionRejected(Exception):
+    """Business refusal raised while the pair is locked."""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
 
 
 class Like(models.Model):
@@ -144,6 +152,17 @@ class Match(models.Model):
         (BLOCKED, _('Blocked')),
         (DELETED, _('Deleted')),
     ]
+
+    # Access policy.  ``full`` is deliberately the default: it keeps every
+    # existing match usable during the additive rollout of the Free allowance.
+    ACCESS_FULL = 'full'
+    ACCESS_FREE_LIMITED = 'free_limited'
+    ACCESS_LOCKED = 'locked'
+    ACCESS_LEVEL_CHOICES = [
+        (ACCESS_FULL, _('Full access')),
+        (ACCESS_FREE_LIMITED, _('Free limited access')),
+        (ACCESS_LOCKED, _('Locked monthly Free access')),
+    ]
     
     id = models.UUIDField(
         primary_key=True,
@@ -173,6 +192,19 @@ class Match(models.Model):
         default=ACTIVE,
         verbose_name=_('Status')
     )
+
+    access_level = models.CharField(
+        max_length=20,
+        choices=ACCESS_LEVEL_CHOICES,
+        default=ACCESS_FULL,
+        verbose_name=_('Access level'),
+    )
+
+    # These counters are only used for a Free-Free match that was unlocked by
+    # both monthly allowances.  They are incremented while the Match is locked
+    # by MessageService, so an HTTP retry cannot spend two messages.
+    user1_free_messages_sent = models.PositiveSmallIntegerField(default=0)
+    user2_free_messages_sent = models.PositiveSmallIntegerField(default=0)
     
     # Messaging info
     last_message_at = models.DateTimeField(
@@ -197,6 +229,20 @@ class Match(models.Model):
         default=0,
         verbose_name=_('User 2 unread count')
     )
+
+    # A match is "new" independently for each participant.  A nullable
+    # timestamp is intentional: null is the durable, queryable unread state;
+    # it also avoids inferring the state from a client-side notification.
+    user1_seen_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_('User 1 seen at'),
+    )
+    user2_seen_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_('User 2 seen at'),
+    )
     
     # Timestamps
     created_at = models.DateTimeField(
@@ -218,6 +264,14 @@ class Match(models.Model):
             models.Index(fields=['user1', 'status', '-last_message_at']),
             models.Index(fields=['user2', 'status', '-last_message_at']),
             models.Index(fields=['status', '-created_at']),
+            models.Index(
+                fields=['user1', 'status', 'user1_seen_at'],
+                name='match_u1_status_seen_idx',
+            ),
+            models.Index(
+                fields=['user2', 'status', 'user2_seen_at'],
+                name='match_u2_status_seen_idx',
+            ),
         ]
     
     def __str__(self):
@@ -230,22 +284,49 @@ class Match(models.Model):
     def get_unread_count(self, user):
         """Get unread count for a specific user."""
         return self.user1_unread_count if user == self.user1 else self.user2_unread_count
+
+    def get_free_messages_sent(self, user):
+        return self.user1_free_messages_sent if user == self.user1 else self.user2_free_messages_sent
+
+    def is_seen_by(self, user):
+        """Return the participant-specific consultation state.
+
+        This method deliberately rejects a non-participant instead of silently
+        returning a value, so callers cannot accidentally use it as a match
+        existence probe.
+        """
+        if user.pk == self.user1_id:
+            return self.user1_seen_at is not None
+        if user.pk == self.user2_id:
+            return self.user2_seen_at is not None
+        raise ValueError('The user is not a participant in this match.')
+
+    def mark_seen_by(self, user, *, at=None):
+        """Persist a participant consultation without altering the other one."""
+        at = at or timezone.now()
+        if user.pk == self.user1_id:
+            if self.user1_seen_at is None:
+                self.user1_seen_at = at
+                self.save(update_fields=['user1_seen_at'])
+            return
+        if user.pk == self.user2_id:
+            if self.user2_seen_at is None:
+                self.user2_seen_at = at
+                self.save(update_fields=['user2_seen_at'])
+            return
+        raise ValueError('The user is not a participant in this match.')
     
     def increment_unread(self, for_user):
-        """Increment unread count for a user."""
-        if for_user == self.user1:
-            self.user1_unread_count += 1
-        else:
-            self.user2_unread_count += 1
-        self.save(update_fields=['user1_unread_count', 'user2_unread_count'])
+        """Deprecated: counters are managed by the locked messaging service."""
+        raise RuntimeError(
+            'Unread counters must be updated by MessageService while the Match is locked.'
+        )
     
     def reset_unread(self, for_user):
-        """Reset unread count for a user."""
-        if for_user == self.user1:
-            self.user1_unread_count = 0
-        else:
-            self.user2_unread_count = 0
-        self.save(update_fields=['user1_unread_count', 'user2_unread_count'])
+        """Deprecated: counters are managed by the locked messaging service."""
+        raise RuntimeError(
+            'Unread counters must be recalculated by MessageService while the Match is locked.'
+        )
     
     @classmethod
     def get_match_between(cls, user1, user2):
@@ -254,6 +335,54 @@ class Match(models.Model):
             Q(user1=user1, user2=user2) | Q(user1=user2, user2=user1),
             status=cls.ACTIVE
         ).first()
+
+
+class MonthlyFreeAccess(models.Model):
+    """The single monthly Free allowance consumed by an explicit action.
+
+    A row represents a consumption, never a reservation.  Its unique key
+    makes the UTC civil-month rule database-enforced and allows a retried like
+    reveal to return the same revealed profile without consuming another token.
+    """
+
+    LIKE_REVEAL = 'like_reveal'
+    FREE_MATCH = 'free_match'
+    PURPOSE_CHOICES = [
+        (LIKE_REVEAL, _('Received like reveal')),
+        (FREE_MATCH, _('Free match unlock')),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='monthly_free_accesses',
+    )
+    month_start = models.DateField()
+    purpose = models.CharField(max_length=20, choices=PURPOSE_CHOICES)
+    # Set only for LIKE_REVEAL.  Keeping this reference makes retries
+    # idempotent without exposing a second received-like profile.
+    revealed_like = models.ForeignKey(
+        Like,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='monthly_reveals',
+    )
+    consumed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'monthly_free_accesses'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'month_start'],
+                name='unique_monthly_free_access_per_user',
+            ),
+        ]
+        indexes = [models.Index(fields=['user', 'month_start'])]
+
+    def __str__(self):
+        return f'{self.user_id} / {self.month_start} / {self.purpose}'
 
 
 class ProfileView(models.Model):
@@ -410,21 +539,21 @@ class DailyLikeLimit(models.Model):
     def __str__(self):
         return f"{self.user.display_name} - {self.date}"
     
-    def has_likes_remaining(self, user):
-        """Check if user has regular likes remaining."""
-        if user.is_premium:
-            return True
-        
-        limit = 30 if user.is_verified else 20
-        return self.likes_count < limit
+    def has_likes_remaining(self, user=None):
+        """Return the canonical shared-swipe entitlement for this user."""
+        from .daily_likes_service import DailyLikesService
+
+        return DailyLikesService.get_likes_remaining(user or self.user) != 0
     
     def has_super_likes_remaining(self):
-        """Check if user has super likes remaining."""
-        return self.super_likes_count < 3
+        """Return the canonical Premium super-like entitlement."""
+        from .daily_likes_service import DailyLikesService
+
+        return DailyLikesService.get_super_likes_remaining(self.user) > 0
     
     def has_rewinds_remaining(self):
         """Check if user has rewinds remaining."""
-        return self.rewinds_count < 3
+        return self.rewinds_count < 5
 
 
 class InteractionHistory(models.Model):
@@ -491,6 +620,15 @@ class InteractionHistory(models.Model):
         blank=True,
         verbose_name=_('Revoked at')
     )
+
+    # A rewind is a special, idempotent revocation.  Keeping its timestamp
+    # lets a repeated request return the same result without consuming another
+    # daily rewind and distinguishes it from a history-page revocation.
+    rewound_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name=_('Rewound at'),
+    )
     
     class Meta:
         verbose_name = _('Interaction History')
@@ -504,12 +642,13 @@ class InteractionHistory(models.Model):
             models.Index(fields=['user', 'is_revoked'], name='idx_ih_user_revoked'),
             models.Index(fields=['user', 'interaction_type', 'is_revoked'], name='idx_ih_user_type_revoked'),
         ]
-        # Ensure unique active interaction per user-target-type combination
+        # A discovery decision has one active projection per user-target pair.
+        # Historical rows stay available after revocation, including a rewind.
         constraints = [
             models.UniqueConstraint(
-                fields=['user', 'target_user', 'interaction_type'],
+                fields=['user', 'target_user'],
                 condition=Q(is_revoked=False),
-                name='unique_active_interaction'
+                name='unique_active_interaction_pair',
             )
         ]
     
@@ -556,64 +695,99 @@ class InteractionHistory(models.Model):
         ).first()
     
     @classmethod
-    def create_or_reactivate(cls, user, target_user, interaction_type):
+    def create_or_reactivate(
+        cls,
+        user,
+        target_user,
+        interaction_type,
+        *,
+        before_create=None,
+    ):
+        """Record a discovery action without ever reactivating history.
+
+        A retry of the currently active action is idempotent.  Once an action
+        is revoked, including by rewind, a later action receives a new row and
+        a new identifier.  Locking both participant rows in a stable order and
+        the existing pair projection keeps competing swipes coherent.
+
+        An existing match protects the pair: a stale client cannot replace the
+        previous discovery action and must use the explicit unmatch flow.
         """
-        Create a new interaction or reactivate a revoked one.
-        Returns (interaction, created) tuple.
-        
-        IMPORTANT: Handles the case where an active interaction already exists
-        to avoid violating the unique constraint.
-        """
-        from django.db import IntegrityError
-        
-        try:
-            # Check if an ACTIVE interaction already exists
-            existing_active = cls.objects.filter(
-                user=user,
-                target_user=target_user,
-                interaction_type=interaction_type,
-                is_revoked=False
-            ).first()
-            
-            if existing_active:
-                # Update the existing active interaction instead of creating a new one
-                existing_active.created_at = timezone.now()
-                existing_active.save(update_fields=['created_at'])
-                return existing_active, False
-            
-            # Check for existing revoked interaction
-            existing_revoked = cls.objects.filter(
-                user=user,
-                target_user=target_user,
-                interaction_type=interaction_type,
-                is_revoked=True
-            ).first()
-            
-            if existing_revoked:
-                # Reactivate existing interaction
-                existing_revoked.is_revoked = False
-                existing_revoked.created_at = timezone.now()
-                existing_revoked.revoked_at = None
-                existing_revoked.save()
-                return existing_revoked, False
-            
-            # Create new interaction
-            interaction = cls.objects.create(
-                user=user,
-                target_user=target_user,
-                interaction_type=interaction_type
-            )
-            return interaction, True
-            
-        except IntegrityError:
-            # In case of race condition, get the existing active interaction
-            existing = cls.objects.get(
-                user=user,
-                target_user=target_user,
-                interaction_type=interaction_type,
-                is_revoked=False
-            )
-            # Update the timestamp
-            existing.created_at = timezone.now()
-            existing.save(update_fields=['created_at'])
-            return existing, False
+        if interaction_type not in {
+            cls.LIKE,
+            cls.SUPER_LIKE,
+            cls.DISLIKE,
+        }:
+            raise ValueError('invalid_interaction_type')
+
+        user_ids = sorted((user.pk, target_user.pk))
+        for attempt in range(2):
+            try:
+                with transaction.atomic():
+                    # The stable lock order avoids deadlocks between two
+                    # opposite-direction swipes for the same pair.
+                    locked_users = {
+                        locked.pk: locked
+                        for locked in (
+                            User.objects.select_for_update()
+                            .filter(pk__in=user_ids)
+                            .order_by('pk')
+                        )
+                    }
+                    locked_user = locked_users[user.pk]
+                    locked_target = locked_users[target_user.pk]
+                    active = list(
+                        cls.objects.select_for_update()
+                        .filter(
+                            user=locked_user,
+                            target_user=locked_target,
+                            is_revoked=False,
+                        )
+                        .order_by('-created_at', '-id')
+                    )
+
+                    same_action = next(
+                        (
+                            interaction
+                            for interaction in active
+                            if interaction.interaction_type == interaction_type
+                        ),
+                        None,
+                    )
+                    if same_action is not None:
+                        return same_action, False
+
+                    if Match.objects.select_for_update().filter(
+                        Q(user1=locked_user, user2=locked_target)
+                        | Q(user1=locked_target, user2=locked_user),
+                    ).exists():
+                        raise InteractionActionRejected('match_exists_use_unmatch')
+
+                    if before_create is not None:
+                        before_create()
+
+                    if active:
+                        cls.objects.filter(
+                            pk__in=[interaction.pk for interaction in active],
+                            is_revoked=False,
+                        ).update(
+                            is_revoked=True,
+                            revoked_at=timezone.now(),
+                        )
+
+                    return (
+                        cls.objects.create(
+                            user=locked_user,
+                            target_user=locked_target,
+                            interaction_type=interaction_type,
+                        ),
+                        True,
+                    )
+            except IntegrityError:
+                # A database constraint can still win on engines where an
+                # empty select_for_update query cannot lock a future insert.
+                # Retry once, then return the now-active same action.
+                if attempt:
+                    raise
+
+        raise RuntimeError('interaction_action_retry_exhausted')

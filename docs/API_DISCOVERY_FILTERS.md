@@ -19,7 +19,7 @@ Tous les endpoints nécessitent une authentification JWT valide :
 ```
 Authorization: Bearer <firebase_id_token>
 ```
-
+continue
 ---
 
 ## 📡 ENDPOINTS

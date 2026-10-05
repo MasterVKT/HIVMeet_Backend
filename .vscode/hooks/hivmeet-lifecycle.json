@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "python .agents/hooks/lifecycle_hook.py --event prompt --scope backend --host vscode --map .agents/project-map.json",
+        "windows": "powershell -NoProfile -ExecutionPolicy Bypass -File .agents/hooks/invoke-agent-hook.ps1 -Event prompt -Scope backend -HostName vscode",
+        "cwd": ".",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}

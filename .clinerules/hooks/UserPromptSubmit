@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Cline hook: UserPromptSubmit — skills router gate
+# Location: .clinerules/hooks/UserPromptSubmit (no extension, must be executable)
+# NOTE: Cline hooks are supported on macOS and Linux only (not Windows).
+#       On Windows this file is ignored; the rule in cline-rules.md handles the instruction.
+# Input: JSON via stdin (prompt text + attachments)
+# Output: JSON with contextModification field injected into conversation
+set -euo pipefail
+
+# Drain stdin (required by Cline hook protocol)
+INPUT=$(cat)
+
+MSG="[ORCHESTRATOR GATE] Avant tout traitement : lire .agents/skills/task-router/SKILL.md, appliquer son arbre de decision, identifier les skills pertinentes, puis traiter la requete."
+
+printf '{"contextModification": "%s"}\n' "$MSG"
+exit 0

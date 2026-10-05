@@ -6,6 +6,9 @@ from django.contrib.auth import get_user_model
 from firebase_admin import messaging
 import logging
 
+from notifications.fcm import send_fcm_to_user
+from notifications.payloads import match_payload, like_payload
+
 logger = logging.getLogger('hivmeet.matching')
 User = get_user_model()
 
@@ -18,41 +21,29 @@ def send_match_notification(user_id, matched_user_id):
     try:
         user = User.objects.get(id=user_id)
         matched_user = User.objects.get(id=matched_user_id)
-        
-        # Get FCM tokens
-        tokens = [token['token'] for token in user.fcm_tokens if token.get('token')]
-        
-        if not tokens:
-            logger.warning(f"No FCM tokens found for user {user.email}")
-            return
-        
-        # Create notification
-        notification = messaging.Notification(
-            title="C'est un Match !",
-            body=f"Vous et {matched_user.display_name} vous êtes plu !",
-            image=matched_user.profile.photos.filter(is_main=True).first().thumbnail_url if hasattr(matched_user, 'profile') else None
+
+        # Sécuriser la récupération de la photo principale (peut être absente)
+        main_photo = None
+        if hasattr(matched_user, 'profile'):
+            main_photo = matched_user.profile.photos.filter(is_main=True).first()
+        # Push payloads have no authenticated recipient request context; never
+        # include a profile-media URL or private-object capability here.
+        image_url = None
+
+        data = match_payload(
+            match_id=str(matched_user_id),  # match_id = l'id du match (== conversation)
+            other_user_display_name=matched_user.display_name,
+            other_user_id=str(matched_user.id),
         )
-        
-        # Create message
-        message = messaging.MulticastMessage(
-            notification=notification,
-            data={
-                'notification_type': 'NEW_MATCH',
-                'match_id': str(matched_user_id),
-                'matched_user_name': matched_user.display_name,
-                'click_action': 'FLUTTER_NOTIFICATION_CLICK'
-            },
-            tokens=tokens
+
+        notif = messaging.Notification(
+            title=data['title'],
+            body=data['body'],
+            image=image_url,
         )
-        
-        # Send notification
-        response = messaging.send_multicast(message)
-        
-        logger.info(
-            f"Match notification sent to {user.email}: "
-            f"{response.success_count} successful, {response.failure_count} failed"
-        )
-        
+
+        send_fcm_to_user(user, notification=notif, data=data)
+
     except User.DoesNotExist:
         logger.error(f"User not found: {user_id} or {matched_user_id}")
     except Exception as e:
@@ -60,63 +51,51 @@ def send_match_notification(user_id, matched_user_id):
 
 
 @shared_task
-def send_like_notification(user_id, liker_id, is_super_like=False):
+def send_like_notification(
+    user_id,
+    liker_id,
+    is_super_like=False,
+    notification_id=None,
+):
     """
-    Send push notification for new like (premium feature).
+    Send push notification for new like / super-like.
+
+    Tous les utilisateurs reçoivent une notification :
+    - Premium : révèle l'identité du likeur.
+    - Non-premium : notification anonymisée (titre générique, from_user_id vide).
+
+    La notification est supprimée seulement si l'utilisateur a désactivé
+    les notifications de like dans ses préférences.
     """
     try:
         user = User.objects.get(id=user_id)
         liker = User.objects.get(id=liker_id)
-        
-        # Only send if user is premium and has enabled like notifications
-        if not user.is_premium:
-            return
-        
+
+        # Respect des préférences utilisateur
         notification_settings = user.notification_settings or {}
         if not notification_settings.get('profile_like_notifications', True):
             return
-        
-        # Get FCM tokens
-        tokens = [token['token'] for token in user.fcm_tokens if token.get('token')]
-        
-        if not tokens:
+
+        if not notification_id:
+            logger.warning("Like notification skipped: missing canonical notification ID")
             return
-        
-        # Create notification
-        if is_super_like:
-            title = "Super Like reçu !"
-            body = f"{liker.display_name} vous a envoyé un Super Like 💙"
-        else:
-            title = "Quelqu'un s'intéresse à vous !"
-            body = f"{liker.display_name} a aimé votre profil"
-        
-        notification = messaging.Notification(
-            title=title,
-            body=body
+
+        data = like_payload(
+            notification_id=str(notification_id),
+            is_super=is_super_like,
+            liker_display_name=liker.display_name,
+            liker_id=str(liker.id),
+            recipient_is_premium=user.is_premium,
         )
-        
-        # Create message
-        message = messaging.MulticastMessage(
-            notification=notification,
-            data={
-                'notification_type': 'PROFILE_LIKED',
-                'liker_user_id': str(liker_id),
-                'liker_user_name': liker.display_name,
-                'is_super_like': str(is_super_like),
-                'click_action': 'FLUTTER_NOTIFICATION_CLICK'
-            },
-            tokens=tokens
+
+        notif = messaging.Notification(
+            title=data['title'],
+            body=data['body'],
         )
-        
-        # Send notification
-        response = messaging.send_multicast(message)
-        
-        logger.info(
-            f"Like notification sent to {user.email}: "
-            f"{response.success_count} successful"
-        )
-        
+
+        send_fcm_to_user(user, notification=notif, data=data)
+
     except User.DoesNotExist:
-        logger.error(f"User not found: {user_id} or {liker_id}")
-    except Exception as e:
-        logger.error(f"Error sending like notification: {str(e)}")
+        logger.error("Like notification recipient or sender not found")
+    except Exception:
+        logger.error("Like notification delivery failed")

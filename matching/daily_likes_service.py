@@ -13,8 +13,8 @@ from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 import logging
 
-from .models import Like, DailyLikeLimit, InteractionHistory
-from subscriptions.models import Subscription
+from .models import Like, Dislike, DailyLikeLimit, InteractionHistory
+from subscriptions.utils import is_premium_user as has_active_premium
 
 logger = logging.getLogger('hivmeet.matching')
 
@@ -24,13 +24,13 @@ class DailyLikesService:
     Service pour gérer les limites de likes quotidiens.
     
     Limites selon les specs:
-    - Utilisateurs gratuits: 10 likes/jour, 1 super like/jour
+    - Utilisateurs gratuits: 10 swipes/jour, aucun super like
     - Utilisateurs premium: likes illimités, 5 super likes/jour
     """
     
     # Limites par défaut (spécifications: 10 likes gratuits)
     FREE_DAILY_LIKES_LIMIT = 10
-    FREE_DAILY_SUPER_LIKES_LIMIT = 1
+    FREE_DAILY_SUPER_LIKES_LIMIT = 0
     PREMIUM_DAILY_SUPER_LIKES_LIMIT = 5
     
     # Valeur pour indiquer illimité (pas 999 qui cause des bugs)
@@ -47,20 +47,7 @@ class DailyLikesService:
         Returns:
             bool: True si premium, False sinon
         """
-        # Méthode 1: Vérifier l'attribut is_premium sur le user model
-        if hasattr(user, 'is_premium') and user.is_premium:
-            return True
-        
-        # Méthode 2: Vérifier via Subscription model
-        try:
-            return Subscription.objects.filter(
-                user=user,
-                status__in=[Subscription.STATUS_ACTIVE, Subscription.STATUS_TRIALING],
-                current_period_end__gt=timezone.now()
-            ).exists()
-        except Exception as e:
-            logger.warning(f"[DailyLikesService] Error checking premium status: {e}")
-            return False
+        return has_active_premium(user)
     
     @staticmethod
     def get_user_daily_limit(user) -> int:
@@ -102,9 +89,9 @@ class DailyLikesService:
         return tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
     
     @staticmethod
-    def count_likes_today(user) -> int:
+    def count_swipes_today(user) -> int:
         """
-        Compte les likes réguliers envoyés par l'utilisateur aujourd'hui.
+        Compte tous les swipes effectués par l'utilisateur aujourd'hui.
         Utilise à la fois le modèle Like et InteractionHistory pour compatibilité.
         
         Args:
@@ -116,11 +103,15 @@ class DailyLikesService:
         today_start = DailyLikesService.get_start_of_day()
         today_end = DailyLikesService.get_end_of_day()
         
-        # Compter via le nouveau modèle InteractionHistory (non révoqués)
+        # Les interactions révoquées restent comptées: un rewind ne restitue
+        # jamais le swipe consommé.
         interaction_count = InteractionHistory.objects.filter(
             user=user,
-            interaction_type=InteractionHistory.LIKE,
-            is_revoked=False,
+            interaction_type__in=[
+                InteractionHistory.LIKE,
+                InteractionHistory.SUPER_LIKE,
+                InteractionHistory.DISLIKE,
+            ],
             created_at__gte=today_start,
             created_at__lt=today_end
         ).count()
@@ -130,10 +121,20 @@ class DailyLikesService:
             from_user=user,
             created_at__gte=today_start,
             created_at__lt=today_end
-        ).exclude(like_type='super').count()
+        ).count()
+        dislike_count = Dislike.objects.filter(
+            from_user=user,
+            created_at__gte=today_start,
+            created_at__lt=today_end,
+        ).count()
         
         # Retourner le maximum des deux pour éviter les incohérences
-        return max(interaction_count, like_count)
+        return max(interaction_count, like_count + dislike_count)
+
+    @staticmethod
+    def count_likes_today(user) -> int:
+        """Backward-compatible alias: the daily quota counts every swipe."""
+        return DailyLikesService.count_swipes_today(user)
     
     @staticmethod
     def count_super_likes_today(user) -> int:
@@ -153,7 +154,6 @@ class DailyLikesService:
         interaction_count = InteractionHistory.objects.filter(
             user=user,
             interaction_type=InteractionHistory.SUPER_LIKE,
-            is_revoked=False,
             created_at__gte=today_start,
             created_at__lt=today_end
         ).count()
@@ -185,8 +185,8 @@ class DailyLikesService:
         if daily_limit == DailyLikesService.UNLIMITED:
             return DailyLikesService.UNLIMITED
         
-        likes_sent = DailyLikesService.count_likes_today(user)
-        remaining = daily_limit - likes_sent
+        swipes_sent = DailyLikesService.count_swipes_today(user)
+        remaining = daily_limit - swipes_sent
         
         # S'assurer que la valeur est dans les limites valides [0, daily_limit]
         return max(0, min(remaining, daily_limit))
@@ -229,6 +229,11 @@ class DailyLikesService:
             return False, _("Limite de likes quotidiens atteinte. Réessayez demain!")
         
         return True, ""
+
+    @staticmethod
+    def can_user_swipe(user) -> tuple:
+        """Check the shared quota before any discovery action."""
+        return DailyLikesService.can_user_like(user)
     
     @staticmethod
     def check_and_use_daily_like(user) -> tuple:
@@ -298,7 +303,7 @@ class DailyLikesService:
         daily_limit = DailyLikesService.FREE_DAILY_LIKES_LIMIT
         
         # Récupérer les likes utilisés aujourd'hui (non révoqués)
-        likes_used_today = DailyLikesService.count_likes_today(user)
+        likes_used_today = DailyLikesService.count_swipes_today(user)
         
         # Calculer les likes restants
         remaining = max(0, daily_limit - likes_used_today)
@@ -366,7 +371,8 @@ class DailyLikesService:
             ),
             'is_premium': is_premium,
             'reset_at': DailyLikesService.get_next_reset_time().isoformat(),
-            'likes_used_today': DailyLikesService.count_likes_today(user),
+            'likes_used_today': DailyLikesService.count_swipes_today(user),
+            'swipes_used_today': DailyLikesService.count_swipes_today(user),
             'super_likes_used_today': DailyLikesService.count_super_likes_today(user),
         }
     
@@ -381,7 +387,7 @@ class DailyLikesService:
         """
         status = DailyLikesService.get_status_summary(user)
         logger.info(
-            f"[DAILY_LIKES] {context} - User: {user.id} ({user.email}) - "
+            f"[DAILY_LIKES] {context} - "
             f"is_premium={status['is_premium']}, "
             f"daily_likes_remaining={status['daily_likes_remaining']}, "
             f"likes_used_today={status['likes_used_today']}, "

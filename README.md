@@ -119,6 +119,10 @@ python manage.py runserver
 # Dans un autre terminal - Worker Celery
 celery -A hivmeet_backend worker -l info
 
+# Sous Windows en développement : Celery prefork n'est pas pris en charge.
+# Utiliser un seul worker sans sous-processus.
+celery -A hivmeet_backend worker -l info --pool=solo --concurrency=1
+
 # Dans un autre terminal - Celery Beat
 celery -A hivmeet_backend beat -l info
 ```
@@ -143,10 +147,12 @@ FIREBASE_CREDENTIALS_PATH=credentials/firebase_credentials.json
 FIREBASE_STORAGE_BUCKET=your-bucket.firebasestorage.app
 
 # MyCoolPay
-MYCOOLPAY_API_KEY=your_api_key
-MYCOOLPAY_API_SECRET=your_secret
-MYCOOLPAY_BASE_URL=https://api.mycoolpay.com/v1
-MYCOOLPAY_WEBHOOK_SECRET=your_webhook_secret
+MYCOOLPAY_PUBLIC_KEY=your_public_key
+MYCOOLPAY_PRIVATE_KEY=your_private_key
+MYCOOLPAY_BASE_URL=https://my-coolpay.com/api
+MYCOOLPAY_CALLBACK_ALLOWED_IPS=15.236.140.89
+MYCOOLPAY_ENABLED_CURRENCIES=XAF,EUR
+MYCOOLPAY_DEFAULT_CURRENCY=XAF
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
@@ -306,4 +312,4 @@ hivmeet_backend/
 
 ---
 
-**Développé avec ❤️ pour la communauté VIH+** 
+**Développé avec ❤️ pour la communauté VIH+**

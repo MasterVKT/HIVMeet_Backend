@@ -15,6 +15,11 @@ import hashlib
 logger = logging.getLogger('hivmeet.storage')
 
 
+def _requires_phase2_private_adapter(file_path: str) -> bool:
+    """Keep KYC and profile-media paths out of this legacy generic adapter."""
+    return isinstance(file_path, str) and file_path.startswith(('kyc/', 'profiles/'))
+
+
 class StorageManager:
     """
     Manager for Firebase Storage operations.
@@ -40,8 +45,12 @@ class StorageManager:
             metadata: Additional metadata for the file
             
         Returns:
-            Public URL of the uploaded file
+            The private object path. This legacy adapter never changes a blob
+            ACL or emits a public URL.
         """
+        if _requires_phase2_private_adapter(file_path):
+            # Do not turn an obsolete caller into a path-bearing error/log.
+            raise ValueError('private_media_requires_private_adapter')
         try:
             blob = self.bucket.blob(file_path)
             
@@ -61,17 +70,13 @@ class StorageManager:
             # Upload file
             blob.upload_from_string(file_data, content_type=content_type)
             
-            # Make the blob publicly accessible (for profile photos)
-            # For sensitive documents, we'll use signed URLs instead
-            if file_path.startswith('profiles/'):
-                blob.make_public()
-                return blob.public_url
-            else:
-                # Return the path for sensitive files
-                return file_path
+            # Public profile objects are prohibited.  New profile media uses
+            # profiles.private_storage; this compatibility adapter keeps every
+            # object private if an older call site still reaches it.
+            return file_path
                 
-        except Exception as e:
-            logger.error(f"Error uploading file to {file_path}: {str(e)}")
+        except Exception:
+            logger.error("Storage upload failed")
             raise
     
     def upload_image(
@@ -95,6 +100,8 @@ class StorageManager:
         Returns:
             Dictionary with 'main' and 'thumbnail' URLs
         """
+        if _requires_phase2_private_adapter(base_path):
+            raise ValueError('private_media_requires_private_adapter')
         try:
             # Open image
             image = Image.open(BytesIO(image_data))
@@ -127,22 +134,28 @@ class StorageManager:
                 content_type='image/jpeg'
             )
             
-            # Process thumbnail
-            thumb_image = image.copy()
-            thumb_image.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
-            
-            # Save thumbnail to bytes
-            thumb_buffer = BytesIO()
-            thumb_image.save(thumb_buffer, format='JPEG', quality=85, optimize=True)
-            thumb_data = thumb_buffer.getvalue()
-            
-            # Upload thumbnail
-            thumb_path = f"{base_path}thumbnails/{filename}"
-            thumb_url = self.upload_file(
-                thumb_data,
-                thumb_path,
-                content_type='image/jpeg'
-            )
+            try:
+                # Process thumbnail
+                thumb_image = image.copy()
+                thumb_image.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
+
+                # Save thumbnail to bytes
+                thumb_buffer = BytesIO()
+                thumb_image.save(thumb_buffer, format='JPEG', quality=85, optimize=True)
+                thumb_data = thumb_buffer.getvalue()
+
+                # Upload thumbnail
+                thumb_path = f"{base_path}thumbnails/{filename}"
+                thumb_url = self.upload_file(
+                    thumb_data,
+                    thumb_path,
+                    content_type='image/jpeg'
+                )
+            except Exception:
+                # The main object belongs to this upload attempt only. Remove
+                # it when the thumbnail cannot be created.
+                self.delete_file(main_path)
+                raise
             
             return {
                 'main': main_url,
@@ -150,8 +163,8 @@ class StorageManager:
                 'filename': filename
             }
             
-        except Exception as e:
-            logger.error(f"Error processing and uploading image: {str(e)}")
+        except Exception:
+            logger.error("Storage image processing failed")
             raise
     
     def delete_file(self, file_path: str) -> bool:
@@ -167,10 +180,10 @@ class StorageManager:
         try:
             blob = self.bucket.blob(file_path)
             blob.delete()
-            logger.info(f"Deleted file: {file_path}")
+            logger.info("Storage object deleted")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting file {file_path}: {str(e)}")
+        except Exception:
+            logger.error("Storage object deletion failed")
             return False
     
     def generate_signed_url(
@@ -190,6 +203,10 @@ class StorageManager:
         Returns:
             Signed URL
         """
+        if _requires_phase2_private_adapter(file_path):
+            # KYC PUT URLs and all profile-media reads are issued only by their
+            # Phase-2 storage boundaries, never by this generic helper.
+            raise ValueError('private_media_requires_private_adapter')
         try:
             blob = self.bucket.blob(file_path)
             
@@ -202,8 +219,8 @@ class StorageManager:
             )
             
             return url
-        except Exception as e:
-            logger.error(f"Error generating signed URL for {file_path}: {str(e)}")
+        except Exception:
+            logger.error("Storage signed URL generation failed")
             raise
     
     def get_file_metadata(self, file_path: str) -> Optional[Dict[str, Any]]:
@@ -216,6 +233,8 @@ class StorageManager:
         Returns:
             File metadata or None if file doesn't exist
         """
+        if _requires_phase2_private_adapter(file_path):
+            raise ValueError('private_media_requires_private_adapter')
         try:
             blob = self.bucket.blob(file_path)
             blob.reload()
@@ -230,8 +249,8 @@ class StorageManager:
                 'md5_hash': blob.md5_hash,
                 'etag': blob.etag
             }
-        except Exception as e:
-            logger.error(f"Error getting metadata for {file_path}: {str(e)}")
+        except Exception:
+            logger.error("Storage metadata lookup failed")
             return None
     
     def file_exists(self, file_path: str) -> bool:
@@ -244,11 +263,13 @@ class StorageManager:
         Returns:
             True if file exists, False otherwise
         """
+        if _requires_phase2_private_adapter(file_path):
+            raise ValueError('private_media_requires_private_adapter')
         try:
             blob = self.bucket.blob(file_path)
             return blob.exists()
-        except Exception as e:
-            logger.error(f"Error checking if file exists {file_path}: {str(e)}")
+        except Exception:
+            logger.error("Storage existence check failed")
             return False
 
 

@@ -16,9 +16,9 @@ django.setup()
 
 from django.contrib.auth import get_user_model
 from profiles.models import Profile, ProfilePhoto
+from profiles.photo_storage import ProfilePhotoStorageUnavailable, profile_photo_storage
 from matching.models import Match, Like
 from messaging.models import Message
-from django.core.files.storage import default_storage
 from django.db import transaction
 
 User = get_user_model()
@@ -79,31 +79,18 @@ def cleanup_test_photos():
     print(f"   - Photos de test trouvées: {test_photos.count()}")
     print(f"   - Photos admin trouvées: {admin_photos.count()}")
     
-    # Supprimer les fichiers de photos
-    deleted_files = 0
-    for photo in test_photos:
+    # Delegate to the phase-2 private boundary. It never prints a storage
+    # reference and it deletes a legacy source only when its provenance was
+    # explicitly verified by the controlled cutover migration.
+    deleted_photo_objects = 0
+    for photo in list(test_photos) + list(admin_photos):
         try:
-            if photo.photo_url and default_storage.exists(photo.photo_url):
-                default_storage.delete(photo.photo_url)
-                deleted_files += 1
-            if photo.thumbnail_url and default_storage.exists(photo.thumbnail_url):
-                default_storage.delete(photo.thumbnail_url)
-                deleted_files += 1
-        except Exception as e:
-            print(f"   ⚠️  Erreur lors de la suppression du fichier {photo.photo_url}: {e}")
+            profile_photo_storage.delete_photo(photo)
+            deleted_photo_objects += 1
+        except ProfilePhotoStorageUnavailable:
+            print("   ⚠️  Une suppression de média privé n'a pas pu être vérifiée")
     
-    for photo in admin_photos:
-        try:
-            if photo.photo_url and default_storage.exists(photo.photo_url):
-                default_storage.delete(photo.photo_url)
-                deleted_files += 1
-            if photo.thumbnail_url and default_storage.exists(photo.thumbnail_url):
-                default_storage.delete(photo.thumbnail_url)
-                deleted_files += 1
-        except Exception as e:
-            print(f"   ⚠️  Erreur lors de la suppression du fichier {photo.photo_url}: {e}")
-    
-    print(f"   - Fichiers de photos supprimés: {deleted_files}")
+    print(f"   - Objets photo privés supprimés: {deleted_photo_objects}")
     
     # Supprimer les enregistrements de photos
     deleted_photos = test_photos.delete()
@@ -275,4 +262,4 @@ def main():
         print("⚠️  Certaines données peuvent ne pas avoir été supprimées")
 
 if __name__ == "__main__":
-    main() 
+    main()

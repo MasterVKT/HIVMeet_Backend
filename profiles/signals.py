@@ -7,8 +7,6 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
 import logging
-import random
-import string
 
 from .models import Profile, Verification
 
@@ -23,15 +21,23 @@ def create_user_profile(sender, instance, created, **kwargs):
     """
     if created:
         try:
-            profile = Profile.objects.create(user=instance)
-            logger.info(f"Profile created for user: {instance.email}")
+            # A profile created outside the registration flow must explicitly
+            # confirm its binary discovery gender once.  RecommendationService
+            # also filters empty values, so this transient profile never leaks
+            # into Discovery.
+            profile = Profile.objects.create(
+                user=instance,
+                gender='',
+                gender_confirmation_required=True,
+            )
+            logger.info("Profile created")
             
             # Also create an empty verification record
             Verification.objects.create(user=instance)
-            logger.info(f"Verification record created for user: {instance.email}")
+            logger.info("Legacy verification projection created")
             
-        except Exception as e:
-            logger.error(f"Error creating profile for user {instance.email}: {str(e)}")
+        except Exception:
+            logger.error("Profile or legacy verification projection creation failed")
 
 
 @receiver(pre_delete, sender=User)
@@ -44,17 +50,12 @@ def cleanup_user_firebase(sender, instance, **kwargs):
         if instance.firebase_uid:
             from hivmeet_backend.firebase_service import firebase_service
             firebase_service.delete_user(instance.firebase_uid)
-            logger.info(f"Deleted Firebase user: {instance.firebase_uid}")
+            logger.info("Firebase identity deleted")
             
         # Note: Profile and Verification will be deleted automatically due to CASCADE
         
-    except Exception as e:
-        logger.error(f"Error cleaning up Firebase for user {instance.email}: {str(e)}")
-
-
-def generate_verification_code():
-    """Generate a random 6-character verification code."""
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    except Exception:
+        logger.error("Firebase identity cleanup failed")
 
 
 @receiver(post_save, sender=Verification)
@@ -75,7 +76,7 @@ def handle_verification_status_change(sender, instance, created, **kwargs):
             user.verification_status = 'verified'
             user.save(update_fields=['is_verified', 'verification_status'])
             
-            logger.info(f"User {user.email} verified successfully")
+            logger.info("Legacy verification projection updated to verified")
             
         elif instance.status == Verification.REJECTED:
             # Update user verification status
@@ -84,4 +85,4 @@ def handle_verification_status_change(sender, instance, created, **kwargs):
             user.verification_status = 'rejected'
             user.save(update_fields=['is_verified', 'verification_status'])
             
-            logger.info(f"User {user.email} verification rejected")
+            logger.info("Legacy verification projection updated to rejected")

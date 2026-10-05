@@ -81,14 +81,17 @@ class ProfileGenderSoughtTest(TestCase):
         with self.assertRaises(ValidationError):
             self.profile.clean()
     
-    def test_profile_multiple_genders_sought_valid(self):
-        """Test that profiles can seek multiple genders."""
-        self.profile.genders_sought = ['male', 'female', 'non_binary']
-        self.profile.clean()  # Should not raise
-        self.profile.save()  # Should not raise
-        
-        refreshed = Profile.objects.get(pk=self.profile.pk)
-        self.assertEqual(len(refreshed.genders_sought), 3)
+    def test_only_male_and_female_are_valid_sought_genders(self):
+        """The shared Discovery catalogue intentionally has exactly two values."""
+        self.profile.genders_sought = ['male']
+        self.profile.clean()
+        self.profile.save()
+        self.profile.genders_sought = ['male', 'female']
+        with self.assertRaises(ValidationError):
+            self.profile.clean()
+        self.profile.genders_sought = ['non_binary']
+        with self.assertRaises(ValidationError):
+            self.profile.clean()
     
     def test_no_profiles_missing_genders_sought(self):
         """Test that no existing profiles have missing genders_sought."""

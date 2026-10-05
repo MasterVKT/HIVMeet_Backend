@@ -1,0 +1,76 @@
+{
+  "mcpServers": {
+    "hivmeet-backend-code-review-graph": {
+      "command": "D:\\Projets\\HIVMeet\\env\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "code_review_graph",
+        "serve"
+      ],
+      "cwd": "D:\\Projets\\HIVMeet\\env\\hivmeet_backend"
+    },
+    "code-review-graph": {
+      "command": "D:\\Projets\\HIVMeet\\env\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "code_review_graph",
+        "serve"
+      ],
+      "cwd": "D:\\Projets\\HIVMeet\\env\\hivmeet_backend"
+    }
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .gemini/hooks/router-gate.sh",
+            "name": "skills router gate",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .gemini/hooks/double-check.sh",
+            "name": "double-check completion",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .gemini/hooks/crg-session-start.sh",
+            "name": "code-review-graph status",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .gemini/hooks/crg-update.sh",
+            "name": "code-review-graph update",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
+  }
+}

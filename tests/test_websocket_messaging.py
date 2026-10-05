@@ -3,8 +3,10 @@ WebSocket integration tests for real-time messaging.
 """
 
 import uuid
+from unittest.mock import patch
 
 from asgiref.sync import async_to_sync
+from channels.db import database_sync_to_async
 from channels.testing import WebsocketCommunicator
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
@@ -14,6 +16,7 @@ from authentication.models import User
 from hivmeet_backend.asgi import application
 from matching.models import Match
 from messaging.models import Message
+from messaging.services import MessageService
 
 
 @override_settings(
@@ -237,3 +240,90 @@ class WebSocketMessagingTests(TransactionTestCase):
             content="Hello WebSocket",
         )
         self.assertEqual(messages.count(), 1)
+
+    def test_message_send_rejects_unsafe_markup_without_persisting(self):
+        async def scenario():
+            token = self._access_token(self.user1)
+            communicator = WebsocketCommunicator(
+                application,
+                f"/ws/conversations/{self.match.id}/",
+                headers=[(b"authorization", f"Bearer {token}".encode())],
+            )
+
+            connected, _ = await communicator.connect()
+            self.assertTrue(connected)
+
+            await communicator.send_json_to(
+                {
+                    "type": "message.send",
+                    "content": "<script>alert(1)</script>",
+                    "client_message_id": str(uuid.uuid4()),
+                }
+            )
+
+            response = await communicator.receive_json_from(timeout=2)
+            self.assertEqual(response["type"], "error")
+            self.assertEqual(response["code"], "CREATION_FAILED")
+
+            await communicator.disconnect()
+
+        async_to_sync(scenario)()
+        self.assertFalse(Message.objects.filter(match=self.match).exists())
+
+    def test_mark_as_read_broadcasts_receipt_to_every_connected_client(self):
+        message = Message.objects.create(
+            match=self.match,
+            sender=self.user1,
+            content='Read receipt test',
+            status=Message.SENT,
+        )
+        self.match.user2_unread_count = 1
+        self.match.save(update_fields=['user2_unread_count'])
+
+        async def scenario():
+            token1 = self._access_token(self.user1)
+            token2 = self._access_token(self.user2)
+            comm1 = WebsocketCommunicator(
+                application,
+                f"/ws/conversations/{self.match.id}/",
+                headers=[(b"authorization", f"Bearer {token1}".encode())],
+            )
+            comm2 = WebsocketCommunicator(
+                application,
+                f"/ws/conversations/{self.match.id}/",
+                headers=[(b"authorization", f"Bearer {token2}".encode())],
+            )
+
+            async def receive_read_receipt(communicator):
+                for _ in range(6):
+                    event = await communicator.receive_json_from(timeout=2)
+                    if event.get('type') == 'message.read':
+                        return event
+                self.fail('Did not receive message.read event in time')
+
+            connected1, _ = await comm1.connect()
+            connected2, _ = await comm2.connect()
+            self.assertTrue(connected1)
+            self.assertTrue(connected2)
+
+            with patch('messaging.services.send_read_notification.delay'):
+                receipt = await database_sync_to_async(
+                    MessageService.mark_messages_as_read
+                )(self.user2, self.match, str(message.id))
+
+            self.assertEqual(receipt.messages_marked, 1)
+            sender_event = await receive_read_receipt(comm1)
+            reader_event = await receive_read_receipt(comm2)
+            for event in (sender_event, reader_event):
+                self.assertEqual(event['reader_id'], str(self.user2.id))
+                self.assertEqual(event['message_ids'], [str(message.id)])
+                self.assertTrue(event['read_at'])
+
+            await comm1.disconnect()
+            await comm2.disconnect()
+
+        async_to_sync(scenario)()
+        message.refresh_from_db()
+        self.match.refresh_from_db()
+        self.assertEqual(message.status, Message.READ)
+        self.assertEqual(self.match.user2_unread_count, 0)

@@ -22,7 +22,9 @@ from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 from matching.models import Match
-from .models import Message
+from matching.free_access import FreeMatchAccessService
+from profiles.kyc import has_active_kyc
+from .presence import PresenceService
 from .services import MessageService
 
 logger = logging.getLogger('hivmeet.messaging.websocket')
@@ -56,15 +58,30 @@ class ConversationConsumer(AsyncWebsocketConsumer):
             if not hasattr(self, 'user') or not self.user:
                 await self.close(code=4000)  # Invalid token
                 return
+            if not await self._has_active_kyc():
+                await self.close(code=4403)
+                return
             
             # Verify user has access to this conversation
             match = await self._get_active_match()
             if not match:
                 await self.close(code=4001)  # Conversation not found
                 return
+
+            has_access = await database_sync_to_async(
+                lambda: FreeMatchAccessService.state_for(match, self.user)[
+                    'can_view_profile'
+                ]
+            )()
+            if not has_access:
+                await self.close(code=4003)
+                return
             
             self.match = match
             self.group_name = f'conversation_{self.conversation_id}'
+            # A connection-scoped id makes one device disconnect independent
+            # from any other device logged into the same account.
+            self.presence_session_id = f'chat:{self.channel_name}'
             
             # Join room group
             await self.channel_layer.group_add(
@@ -73,27 +90,21 @@ class ConversationConsumer(AsyncWebsocketConsumer):
             )
             
             await self.accept()
+
+            # The same presence service powers REST snapshots, WebSocket state
+            # and delivery receipts. Only its privacy-safe payload is sent.
+            payload = await self._set_presence_online()
+
+            # Being subscribed to this conversation means the incoming messages
+            # have reached the client: flip them to delivered so the sender
+            # can render the second tick.
+            await self._mark_incoming_delivered()
+            await self._broadcast_presence(payload)
+
+            logger.info('Conversation websocket connected: conversation_id=%s', self.conversation_id)
             
-            # Set presence status to online
-            await self._set_presence_online()
-            
-            # Broadcast that user is now online
-            await self.channel_layer.group_send(
-                self.group_name,
-                {
-                    'type': 'presence_update',
-                    'user_id': str(self.user.id),
-                    'status': 'online',
-                    'timestamp': timezone.now().isoformat(),
-                }
-            )
-            
-            logger.info(
-                f'User {self.user.id} connected to conversation {self.conversation_id}'
-            )
-            
-        except Exception as e:
-            logger.error(f'Connection error: {str(e)}', exc_info=True)
+        except Exception:
+            logger.error('Conversation websocket connection failed')
             await self.close(code=4999)  # Internal error
 
     async def disconnect(self, close_code):
@@ -108,31 +119,23 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
             
-            # Set presence status to offline
+            # End only this socket's device session. A sibling notification
+            # or chat session keeps the participant online.
             if hasattr(self, 'user'):
-                await self._set_presence_offline()
-                
-                # Broadcast that user is now offline
-                await self.channel_layer.group_send(
-                    self.group_name,
-                    {
-                        'type': 'presence_update',
-                        'user_id': str(self.user.id),
-                        'status': 'offline',
-                        'timestamp': timezone.now().isoformat(),
-                    }
-                )
-                
-                logger.info(
-                    f'User {self.user.id} disconnected from conversation {self.conversation_id}'
-                )
+                payload = await self._set_presence_offline()
+                await self._broadcast_presence(payload)
+
+                logger.info('Conversation websocket disconnected: conversation_id=%s', self.conversation_id)
         
-        except Exception as e:
-            logger.error(f'Disconnection error: {str(e)}', exc_info=True)
+        except Exception:
+            logger.error('Conversation websocket disconnection failed')
 
     async def receive(self, text_data):
         """Handle incoming WebSocket messages."""
         try:
+            if not await self._has_active_kyc():
+                await self.close(code=4403)
+                return
             data = json.loads(text_data)
             message_type = data.get('type')
             
@@ -142,11 +145,16 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 await self._handle_typing_start(data)
             elif message_type == 'typing.stop':
                 await self._handle_typing_stop(data)
-            elif message_type == 'ping':
-                await self.send(text_data=json.dumps({
-                    'type': 'pong',
-                    'timestamp': timezone.now().isoformat(),
-                }))
+            elif message_type in ('ping', 'presence.heartbeat'):
+                payload = await self._set_presence_online()
+                # Heartbeats make the 90-second server expiry observable to
+                # open chats without exposing a device identifier.
+                await self._broadcast_presence(payload)
+                if message_type == 'ping':
+                    await self.send(text_data=json.dumps({
+                        'type': 'pong',
+                        'timestamp': payload['server_timestamp'],
+                    }))
             elif message_type == 'ice.candidate':
                 await self._handle_ice_candidate(data)
             elif message_type == 'offer':
@@ -154,7 +162,7 @@ class ConversationConsumer(AsyncWebsocketConsumer):
             elif message_type == 'answer':
                 await self._handle_answer(data)
             else:
-                logger.warning(f'Unknown message type: {message_type}')
+                logger.warning('Unknown conversation websocket message type')
                 
         except json.JSONDecodeError:
             logger.warning('Invalid JSON received')
@@ -163,8 +171,8 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 'message': 'Invalid JSON',
                 'code': 'INVALID_JSON',
             }))
-        except Exception as e:
-            logger.error(f'Error processing message: {str(e)}', exc_info=True)
+        except Exception:
+            logger.error('Conversation websocket message processing failed')
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'message': 'Server error',
@@ -186,39 +194,24 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 }))
                 return
             
-            # Create message in database
-            message = await self._create_message(
+            # Persist via service (fires post_save signal → broadcasts + push)
+            message, error = await self._create_message(
                 content=content,
                 client_message_id=client_message_id,
             )
-            
+
             if not message:
                 await self.send(text_data=json.dumps({
                     'type': 'error',
-                    'message': 'Failed to create message',
-                    'code': 'CREATION_FAILED',
+                    'message': 'Unable to send this message',
+                    'code': getattr(error, 'code', 'CREATION_FAILED'),
                 }))
                 return
+
+            logger.info('Message created: message_id=%s', message.id)
             
-            # Broadcast message to group
-            await self.channel_layer.group_send(
-                self.group_name,
-                {
-                    'type': 'message_created',
-                    'message_id': str(message.id),
-                    'conversation_id': str(message.match_id),
-                    'sender_id': str(message.sender_id),
-                    'content': message.content,
-                    'message_type': message.message_type,
-                    'sent_at': message.created_at.isoformat(),
-                    'client_message_id': client_message_id,
-                }
-            )
-            
-            logger.info(f'Message created: {message.id}')
-            
-        except Exception as e:
-            logger.error(f'Error sending message: {str(e)}', exc_info=True)
+        except Exception:
+            logger.error('Conversation websocket message send failed')
             await self.send(text_data=json.dumps({
                 'type': 'error',
                 'message': 'Failed to send message',
@@ -242,8 +235,8 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 }
             )
             
-        except Exception as e:
-            logger.error(f'Error handling typing start: {str(e)}')
+        except Exception:
+            logger.error('Conversation websocket typing-start handling failed')
 
     async def _handle_typing_stop(self, data):
         """Handle typing indicator stop."""
@@ -262,8 +255,8 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 }
             )
             
-        except Exception as e:
-            logger.error(f'Error handling typing stop: {str(e)}')
+        except Exception:
+            logger.error('Conversation websocket typing-stop handling failed')
 
     async def _handle_ice_candidate(self, data):
         """Handle WebRTC ICE candidate."""
@@ -287,8 +280,8 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 }
             )
             
-        except Exception as e:
-            logger.error(f'Error handling ICE candidate: {str(e)}')
+        except Exception:
+            logger.error('Conversation websocket ICE handling failed')
 
     async def _handle_offer(self, data):
         """Handle WebRTC offer."""
@@ -310,8 +303,8 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 }
             )
             
-        except Exception as e:
-            logger.error(f'Error handling offer: {str(e)}')
+        except Exception:
+            logger.error('Conversation websocket offer handling failed')
 
     async def _handle_answer(self, data):
         """Handle WebRTC answer."""
@@ -333,8 +326,8 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 }
             )
             
-        except Exception as e:
-            logger.error(f'Error handling answer: {str(e)}')
+        except Exception:
+            logger.error('Conversation websocket answer handling failed')
 
     # Group event handlers (from channel_layer.group_send)
     async def message_created(self, event):
@@ -346,8 +339,52 @@ class ConversationConsumer(AsyncWebsocketConsumer):
             'sender_id': event['sender_id'],
             'content': event['content'],
             'message_type': event.get('message_type', 'text'),
+            'media_url': event.get('media_url'),
+            'media_type': event.get('media_type'),
+            'media_thumbnail_url': event.get('media_thumbnail_url'),
+            'media_download_url': event.get('media_download_url'),
+            'media_mime_type': event.get('media_mime_type'),
+            'media_size_bytes': event.get('media_size_bytes'),
+            'media_file_name': event.get('media_file_name'),
+            'media_duration_ms': event.get('media_duration_ms'),
             'sent_at': event['sent_at'],
             'client_message_id': event.get('client_message_id'),
+        }))
+
+    async def message_updated(self, event):
+        """Forward a canonical text edit to both conversation participants."""
+        await self.send(text_data=json.dumps({
+            'type': 'message.updated',
+            'conversation_id': event.get('conversation_id'),
+            'message_id': event.get('message_id'),
+            'content': event.get('content', ''),
+            'edited_at': event.get('edited_at'),
+        }))
+
+    async def message_deleted(self, event):
+        """Replace globally retracted messages without removing chronology."""
+        await self.send(text_data=json.dumps({
+            'type': 'message_deleted',
+            'conversation_id': event.get('conversation_id'),
+            'message_ids': event.get('message_ids', []),
+        }))
+
+    async def message_read(self, event):
+        """Forward a read receipt to every connected conversation client."""
+        await self.send(text_data=json.dumps({
+            'type': 'message.read',
+            'reader_id': event['reader_id'],
+            'message_ids': event['message_ids'],
+            'read_at': event['read_at'],
+        }))
+
+    async def message_delivered(self, event):
+        """Forward a delivery receipt to every connected conversation client."""
+        await self.send(text_data=json.dumps({
+            'type': 'message.delivered',
+            'conversation_id': event.get('conversation_id'),
+            'message_ids': event.get('message_ids', []),
+            'delivered_at': event.get('delivered_at'),
         }))
 
     async def typing_indicator(self, event):
@@ -371,8 +408,10 @@ class ConversationConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps({
             'type': 'presence.update',
             'user_id': event['user_id'],
-            'status': event['status'],
-            'timestamp': event['timestamp'],
+            'visibility': bool(event.get('visibility')),
+            'is_online': bool(event.get('is_online')),
+            'last_active': event.get('last_active'),
+            'server_timestamp': event.get('server_timestamp'),
         }))
 
     async def ice_candidate(self, event):
@@ -407,12 +446,30 @@ class ConversationConsumer(AsyncWebsocketConsumer):
         # Only send to users that are not the sender
         if event['from_user_id'] == str(self.user.id):
             return
-        
+
         await self.send(text_data=json.dumps({
             'type': 'webrtc.answer',
             'from_user_id': event['from_user_id'],
             'call_id': event.get('call_id'),
             'answer': event['answer'],
+        }))
+
+    async def incoming_call(self, event):
+        """Handle incoming call event broadcast by the call signal."""
+        call = event['call']
+        # Don't notify the caller themselves
+        if call.get('caller_id') == str(self.user.id):
+            return
+        await self.send(text_data=json.dumps({
+            'type': 'incoming_call',
+            'call': call,
+        }))
+
+    async def call_update(self, event):
+        """Handle call status update event broadcast by the call signal."""
+        await self.send(text_data=json.dumps({
+            'type': 'call_update',
+            'call': event['call'],
         }))
 
     # Helper methods
@@ -446,8 +503,8 @@ class ConversationConsumer(AsyncWebsocketConsumer):
             except (InvalidToken, TokenError, User.DoesNotExist):
                 self.user = None
                 
-        except Exception as e:
-            logger.error(f'Authentication error: {str(e)}')
+        except Exception:
+            logger.error('Conversation websocket authentication failed')
             self.user = None
 
     async def _get_active_match(self):
@@ -461,69 +518,90 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 ).select_related('user1', 'user2').first()
             )()
             return match
-        except Exception as e:
-            logger.error(f'Error getting match: {str(e)}')
+        except Exception:
+            logger.error('Conversation websocket match lookup failed')
             return None
+
+    async def _has_active_kyc(self):
+        """Re-evaluate KYC before every WebSocket entry point."""
+        return await database_sync_to_async(has_active_kyc)(self.user)
+
+    async def send(self, text_data=None, bytes_data=None, close=False):
+        """Prevent post-expiry social payload delivery on an open socket."""
+        if getattr(self, 'user', None) and not await self._has_active_kyc():
+            await self.close(code=4403)
+            return
+        await super().send(text_data=text_data, bytes_data=bytes_data, close=close)
 
     async def _set_presence_online(self):
-        """Set user presence to online in Redis."""
+        """Refresh this socket's 30s heartbeat in the shared service."""
         try:
-            cache_key = f'presence_{self.user.id}_{self.conversation_id}'
-            cache.set(cache_key, {
-                'status': 'online',
-                'timestamp': timezone.now().isoformat(),
-            }, timeout=3600)  # 1 hour TTL
-        except Exception as e:
-            logger.error(f'Error setting presence online: {str(e)}')
+            return await database_sync_to_async(PresenceService.heartbeat)(
+                self.user, self.presence_session_id
+            )
+        except Exception:
+            logger.exception('Conversation websocket presence heartbeat failed')
+            return await database_sync_to_async(PresenceService.snapshot_for)(self.user)
 
     async def _set_presence_offline(self):
-        """Set user presence to offline in Redis."""
+        """Disconnect this socket only; other device sessions remain active."""
         try:
-            cache_key = f'presence_{self.user.id}_{self.conversation_id}'
-            cache.delete(cache_key)
-        except Exception as e:
-            logger.error(f'Error setting presence offline: {str(e)}')
+            return await database_sync_to_async(PresenceService.disconnect)(
+                self.user, getattr(self, 'presence_session_id', '')
+            )
+        except Exception:
+            logger.exception('Conversation websocket presence disconnect failed')
+            return await database_sync_to_async(PresenceService.snapshot_for)(self.user)
+
+    async def _broadcast_presence(self, snapshot):
+        payload = {
+            'type': 'presence_update',
+            'user_id': str(self.user.id),
+            'visibility': bool(snapshot.get('visibility')),
+            'is_online': bool(snapshot.get('is_online')),
+            'last_active': (
+                snapshot['last_active'].isoformat()
+                if snapshot.get('last_active') is not None
+                else None
+            ),
+            'server_timestamp': snapshot['server_timestamp'].isoformat(),
+        }
+        await self.channel_layer.group_send(self.group_name, payload)
+
+    async def _mark_incoming_delivered(self):
+        """Flip this conversation's incoming messages to ``delivered``."""
+        try:
+            def _mark():
+                receipts = MessageService.mark_incoming_as_delivered(
+                    user=self.user,
+                    match=self.match,
+                )
+                MessageService.broadcast_delivery_receipts(receipts)
+                return receipts
+
+            await database_sync_to_async(_mark)()
+        except Exception:
+            # A delivery receipt is an enhancement; never fail the connection.
+            logger.warning('Conversation websocket delivery receipt failed')
 
     async def _create_message(self, content, client_message_id=None):
-        """Create message in database."""
+        """Persist a text message via the service layer (fires post_save signal)."""
         try:
-            # Check for deduplication
-            if client_message_id:
-                existing = await database_sync_to_async(
-                    lambda: Message.objects.filter(
-                        client_message_id=client_message_id,
-                        match_id=self.conversation_id,
-                        sender=self.user,
-                    ).first()
-                , thread_sensitive=False)()
-                if existing:
-                    return existing
-            
-            # Create message
-            message = Message(
-                match_id=self.conversation_id,
-                sender=self.user,
-                content=content,
-                message_type=Message.TEXT,
-                client_message_id=client_message_id or '',
-                status=Message.SENT,
-            )
-            await database_sync_to_async(Message.objects.bulk_create, thread_sensitive=False)([message])
-            
-            # Update match last_message_at
-            await database_sync_to_async(self._update_match_timestamp, thread_sensitive=False)()
-            
-            return message
-            
-        except Exception as e:
-            logger.error(f'Error creating message: {str(e)}')
-            return None
+            def _send():
+                message, error = MessageService.send_message(
+                    sender=self.user,
+                    match=self.match,
+                    content=content,
+                    client_message_id=client_message_id,
+                )
+                return message, error
 
-    def _update_match_timestamp(self):
-        """Update match last_message_at timestamp."""
-        try:
-            Match.objects.filter(id=self.conversation_id).update(
-                last_message_at=timezone.now()
-            )
-        except Exception as e:
-            logger.error(f'Error updating match timestamp: {str(e)}')
+            message, error = await database_sync_to_async(_send)()
+            if error:
+                logger.error('Conversation websocket message service rejected a send')
+                return None, error
+            return message, None
+
+        except Exception:
+            logger.error('Conversation websocket message creation failed')
+            return None, None

@@ -1,5 +1,11 @@
 # Messages Backend Contract Frontend
 
+> **Média privé (phase KYC 2)** : `media_url` et `media_download_url` sont la
+> route API authentifiée de téléchargement, jamais une URL signée, bucket ou
+> `/media/...`. `media_thumbnail_url` est `null` tant qu'une rendition
+> autorisée n'existe pas. Une requête authentifiée sans KYC actif reçoit
+> `403 kyc_required`; le client doit utiliser son transport authentifié.
+
 ## 1. Enums
 ### MessageType
 - `text`
@@ -89,9 +95,9 @@ Response:
       "is_mine": "boolean",
       "content": "string",
       "message_type": "MessageType",
-      "media_url": "string|null",
+      "media_url": "authenticated-api-url|null",
       "media_type": "image|video|audio|null",
-      "media_thumbnail_url": "string|null",
+      "media_thumbnail_url": "null",
       "status": "MessageStatus",
       "sent_at": "datetime",
       "created_at": "datetime",
@@ -112,8 +118,7 @@ Request:
 {
   "client_message_id": "string(max=100, required)",
   "content": "string(max=1000, required for text)",
-  "type": "text|image|video|audio",
-  "media_file_path_on_storage": "string(required for media types)"
+  "type": "text"
 }
 ```
 
@@ -128,7 +133,7 @@ Response 201:
   "is_mine": true,
   "content": "string",
   "message_type": "MessageType",
-  "media_url": "string|null",
+  "media_url": "authenticated-api-url|null",
   "media_type": "image|video|audio|null",
   "status": "MessageStatus",
   "sent_at": "datetime",
@@ -138,7 +143,7 @@ Response 201:
 
 Errors:
 - `400` validation
-- `403` premium requis pour media
+- `400` si un payload média est envoyé sur cet endpoint
 - `404` conversation inconnue
 
 Sanitation:
@@ -165,18 +170,34 @@ Request:
 Response:
 ```json
 {
-  "messages_marked": "integer>=0"
+  "messages_marked": "integer>=0",
+  "unread_count_for_me": "integer>=0",
+  "read_at": "datetime"
 }
 ```
+`read_at` n'est present que si `messages_marked > 0`.
+`unread_count_for_me` est le compteur du match recalcule apres l'operation.
 
 ## 2.6 PUT /api/v1/conversations/{conversation_id}/messages/{message_id}/read/
 Response:
 ```json
 {
   "message": "string",
-  "read_at": "datetime|null"
+  "messages_marked": "integer>=0",
+  "unread_count_for_me": "integer>=0",
+  "read_at": "datetime"
 }
 ```
+`read_at` n'est present que si `messages_marked > 0`.
+
+## 2.6bis GET /api/v1/conversations/unread-count/
+Response:
+```json
+{
+  "unread_count": "integer>=0"
+}
+```
+Somme serveur sur toutes les conversations actives non masquees.
 
 ## 2.7 DELETE /api/v1/conversations/{conversation_id}/messages/{message_id}/
 Response:
@@ -209,24 +230,8 @@ Response:
 }
 ```
 
-## 2.10 POST /api/v1/conversations/generate-media-upload-url/
-Request:
-```json
-{
-  "file_name": "string",
-  "content_type": "string"
-}
-```
-
-Response:
-```json
-{
-  "upload_url": "string",
-  "file_path_on_storage": "string",
-  "content_type": "string",
-  "expires_in_seconds": "integer"
-}
-```
+## 2.10 Endpoint URL signée supprimé
+`POST /api/v1/conversations/generate-media-upload-url/` n'est plus supporté et retourne `404`. Les médias utilisent exclusivement le multipart §2.4.
 
 ## 2.11 POST /api/v1/calls/initiate
 Request:
@@ -310,7 +315,7 @@ Response:
 
 ## 3. Cas limites deterministes
 - Deduplication: meme `client_message_id` retourne le meme message (pas de doublon).
-- Auto-read: la lecture GET marque les messages recus en `read`.
+- Lecture GET sans effet de bord : le client appelle l'endpoint de marquage comme lu lorsque le message est visible.
 - Soft delete: suppression par utilisateur masque uniquement pour lui.
 - Gratuit: historique borne a 50 messages.
 - Premium: media et appels autorises.
@@ -378,7 +383,15 @@ Exemple:
 ### 5.4 Evenements serveur -> client
 
 - `message.created`
-  - champs: `message_id`, `conversation_id`, `sender_id`, `content`, `message_type`, `sent_at`, `client_message_id`
+  - champs: `message_id`, `conversation_id`, `sender_id`, `content`, `message_type`, `media_url`, `media_type`, `media_thumbnail_url`, `sent_at`, `client_message_id`
+- `message.read`
+  - champs: `reader_id`, `message_ids`, `read_at`
+- `message.delivered`
+  - champs: `conversation_id`, `message_ids`, `delivered_at`
+- `incoming_call`
+  - champs: `call` (`id`, `caller_id`, `caller_name`, `call_type`, `match_id`)
+- `call_update`
+  - champs: `call` (`id`, `status`, `end_reason`, `match_id`)
 - `typing.indicator`
   - champs: `user_id`, `status` (`typing` | `stopped`)
 - `presence.update`
@@ -400,6 +413,35 @@ Codes d'erreur WebSocket emis:
 - `EMPTY_MESSAGE`
 - `CREATION_FAILED`
 - `SEND_FAILED`
+
+### 5.4bis Canal notifications utilisateur `/ws/notifications/`
+
+Socket unique par session (pas par conversation), groupe serveur `user_{user_id}`.
+Meme auth que 5.1, code de fermeture `4000` si token absent/invalide.
+Porte tout ce qui doit atteindre l'utilisateur hors de la conversation ouverte.
+
+Serveur -> client:
+- `new_match` : `match_id`, `matched_user_id`
+- `like` / `super_like` : `notification_id` (UUID de la ressource REST),
+  `from_user_id` (vide si non-premium), `like_id`, `is_super`
+- `new_message` : `conversation_id`, `message_id`, `from_user_id`, `preview`, `unread_count`
+- `message_read` : `conversation_id`, `reader_id`, `message_ids`, `read_at`
+- `message_delivered` : `conversation_id`, `message_ids`, `delivered_at`
+- `incoming_call` : `call`
+- `call_update` : `call`
+
+Client -> serveur: `{"type": "ping"}` -> `{"type": "pong", "timestamp": ...}`.
+Tout autre `type` est ignore silencieusement.
+
+`new_message` arrive aussi par push FCM : dedupliquer sur `message_id`
+(`notification_id` FCM = `msg_<message_id>`).
+
+Pour un like ou super-like, FCM et WebSocket transportent exactement le même
+`notification_id` UUID que `GET /api/v1/notifications/`. Les actions
+`PUT /notifications/<id>/read/` et `DELETE /notifications/<id>/delete/`
+doivent utiliser cet UUID, jamais un identifiant synthétique.
+
+Details complets: `docs/MESSAGES_BACKEND_WEBSOCKET_FRONTEND.md` §7.
 
 ### 5.5 Regle de coherence documentaire
 

@@ -1,0 +1,561 @@
+openapi: 3.0.3
+info:
+  title: HIVMeet KYC API
+  version: 1.0.0-draft.2
+  description: >-
+    Canonical KYC v1 working draft through phase 2. Production activation
+    requires the written legal gate defined in KYC_PHASE_0_GOVERNANCE.md.
+    Documents, challenge
+    codes, signed URLs, storage paths, full emails, and medical details are
+    excluded from logs, analytics, notifications, and exports.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /user-profiles/me/verification/:
+    get:
+      summary: Read the caller's safe KYC state without mutation
+      operationId: getMyKycStatus
+      responses:
+        '200':
+          description: Safe state of the current attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /user-profiles/me/verification/start/:
+    post:
+      summary: Start or resume one active attempt and issue a selfie challenge
+      operationId: startKycAttempt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycStartRequest'
+      responses:
+        '201':
+          description: Attempt started or safely resumed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycStartResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /user-profiles/me/verification/upload-intents/:
+    post:
+      summary: Issue one constrained, short-lived upload intent
+      operationId: createKycUploadIntent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycUploadIntentRequest'
+      responses:
+        '201':
+          description: Confidential direct response; never log, export, notify, or analyze it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycUploadIntentResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /user-profiles/me/verification/upload-intents/complete/:
+    post:
+      summary: Confirm direct PUT and schedule idempotent technical validation
+      operationId: completeKycUploadIntent
+      description: >-
+        The request contains only the opaque upload identifier. It never
+        accepts a document, path, URL, hash, challenge code, or medical detail.
+        A 202 response means that validation was queued, not accepted or
+        human-approved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycUploadCompleteRequest'
+      responses:
+        '202':
+          description: Technical validation is processing or was idempotently replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycUploadCompleteResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+  /user-profiles/media/photos/{photo_id}/{variant}/:
+    get:
+      summary: Read a private profile photo through the authenticated API
+      operationId: readPrivateProfilePhoto
+      description: >-
+        The owner may manage their own photo. Any other caller must have active
+        KYC at this exact read. The backend reevaluates access on every GET;
+        it emits no bucket GET signed URL and never returns an object key.
+      parameters:
+        - name: photo_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: variant
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [main, thumbnail]
+      responses:
+        '200':
+          description: Private JPEG. Responses include no-store cache controls.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: The photo is absent or remains an unavailable legacy object.
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /user-profiles/me/verification/submit/:
+    post:
+      summary: Submit three upload intents and the selfie challenge
+      operationId: submitKycAttempt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycSubmitRequest'
+      responses:
+        '202':
+          description: Technical validation and human review are pending.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycSubmitResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /internal/kyc/cases/{case_id}/decision/:
+    post:
+      summary: Record an assigned human KYC decision
+      operationId: decideKycCase
+      description: Requires future reviewer/supervisor role, MFA, assignment, and immutable audit.
+      parameters:
+        - name: case_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycDecisionRequest'
+      responses:
+        '200':
+          description: Atomic decision and projection update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycDecisionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    KycPublicStatus:
+      type: string
+      enum: [not_started, pending_id, pending_medical, pending_selfie, pending_review, verified, rejected, expired]
+    KycDocumentType:
+      type: string
+      enum: [identity_document, medical_document, selfie_with_code]
+    KycDocumentState:
+      type: string
+      enum: [missing, intent_issued, uploaded, processing, accepted, rejected]
+    KycSafeDocumentState:
+      type: object
+      required: [type, state]
+      properties:
+        type:
+          $ref: '#/components/schemas/KycDocumentType'
+        state:
+          $ref: '#/components/schemas/KycDocumentState'
+      additionalProperties: false
+    KycStatusResponse:
+      type: object
+      required: [attempt_id, status, documents]
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          $ref: '#/components/schemas/KycPublicStatus'
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/KycSafeDocumentState'
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Verified KYC expires after the configured 180-day validity period.
+        submitted_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejection_reason_code:
+          type: string
+          nullable: true
+          description: Standardized user-safe code; never a medical detail or internal comment.
+      additionalProperties: false
+    KycStartRequest:
+      type: object
+      required: [consent_version, confirmations, idempotency_key]
+      properties:
+        consent_version:
+          type: string
+          minLength: 1
+          maxLength: 80
+        confirmations:
+          type: object
+          required: [official_identity_document, medical_document_under_90_days, single_use_selfie_challenge, human_review_acknowledged]
+          properties:
+            official_identity_document:
+              type: boolean
+              enum: [true]
+            medical_document_under_90_days:
+              type: boolean
+              enum: [true]
+            single_use_selfie_challenge:
+              type: boolean
+              enum: [true]
+            human_review_acknowledged:
+              type: boolean
+              enum: [true]
+          additionalProperties: false
+        idempotency_key:
+          type: string
+          minLength: 16
+          maxLength: 128
+      additionalProperties: false
+    KycStartResponse:
+      type: object
+      required: [attempt_id, status, selfie_challenge]
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending_id, pending_medical, pending_selfie]
+        selfie_challenge:
+          type: object
+          description: Confidential direct response only; never log, analyze, notify, export, or retain in client diagnostics.
+          required: [code, expires_at]
+          properties:
+            code:
+              type: string
+              minLength: 6
+              maxLength: 32
+            expires_at:
+              type: string
+              format: date-time
+              description: Single-use challenge expiry; configured target is 30 minutes.
+          additionalProperties: false
+      additionalProperties: false
+    KycUploadIntentRequest:
+      type: object
+      required: [attempt_id, document_type, mime_type, size_bytes, sha256, idempotency_key]
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        document_type:
+          $ref: '#/components/schemas/KycDocumentType'
+        mime_type:
+          type: string
+          enum: [image/jpeg, image/jpg, image/png, application/pdf]
+        size_bytes:
+          type: integer
+          minimum: 1
+          maximum: 10485760
+          description: Selfie maximum is 5242880 bytes; identity and medical maximum is 10485760 bytes.
+        sha256:
+          type: string
+          pattern: '^[A-Fa-f0-9]{64}$'
+        idempotency_key:
+          type: string
+          minLength: 16
+          maxLength: 128
+      additionalProperties: false
+      oneOf:
+        - properties:
+            document_type:
+              enum: [identity_document, medical_document]
+            mime_type:
+              enum: [image/jpeg, image/jpg, image/png, application/pdf]
+            size_bytes:
+              maximum: 10485760
+        - properties:
+            document_type:
+              enum: [selfie_with_code]
+            mime_type:
+              enum: [image/jpeg, image/jpg, image/png]
+            size_bytes:
+              maximum: 5242880
+    KycUploadIntentResponse:
+      type: object
+      required: [upload_id, upload_url, required_headers, expires_at]
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+        upload_url:
+          type: string
+          format: uri
+          description: Short-lived PUT URL; never persist, log, notify, analyze, or export.
+        required_headers:
+          type: object
+          required: [Content-Type, Content-Length]
+          additionalProperties: false
+          properties:
+            Content-Type:
+              type: string
+            Content-Length:
+              type: string
+              pattern: '^[1-9][0-9]*$'
+          description: >-
+            Headers bound into the V4 signature. The client must send both
+            Content-Type and the exact declared Content-Length; neither value
+            may be changed or omitted.
+        expires_at:
+          type: string
+          format: date-time
+          description: Upload intent expiry; configured default is 30 minutes.
+        idempotent_replay:
+          type: boolean
+          description: True only when the same accepted idempotency request is replayed.
+      additionalProperties: false
+    KycUploadCompleteRequest:
+      type: object
+      required: [upload_id]
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+      additionalProperties: false
+    KycUploadCompleteResponse:
+      type: object
+      required: [upload_id, state, idempotent_replay]
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [processing]
+        idempotent_replay:
+          type: boolean
+      additionalProperties: false
+    KycSubmitRequest:
+      type: object
+      required: [attempt_id, identity_upload_id, medical_upload_id, selfie_upload_id, selfie_challenge_code, idempotency_key]
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        identity_upload_id:
+          type: string
+          format: uuid
+        medical_upload_id:
+          type: string
+          format: uuid
+        selfie_upload_id:
+          type: string
+          format: uuid
+        selfie_challenge_code:
+          type: string
+          minLength: 6
+          maxLength: 32
+          description: Confidential direct request value; never include in logging, analytics, notifications, exports, or errors.
+        idempotency_key:
+          type: string
+          minLength: 16
+          maxLength: 128
+      additionalProperties: false
+    KycSubmitResponse:
+      type: object
+      required: [attempt_id, status]
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending_review]
+      additionalProperties: false
+    KycDecisionRequest:
+      type: object
+      required: [decision, reason_code, idempotency_key]
+      properties:
+        decision:
+          type: string
+          enum: [verified, rejected, revoked]
+        reason_code:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Standardized code; user-safe reasons contain no medical detail.
+        internal_comment:
+          type: string
+          maxLength: 500
+          description: Restricted field; no document content or unnecessary medical detail.
+        idempotency_key:
+          type: string
+          minLength: 16
+          maxLength: 128
+      additionalProperties: false
+    KycDecisionResponse:
+      type: object
+      required: [attempt_id, status, expires_at]
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [verified, rejected, expired]
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      required: [error, message, details, status_code]
+      properties:
+        error:
+          type: string
+          enum: [validation_error, authentication_required, kyc_required, forbidden, invalid_state, idempotency_conflict, intent_expired, challenge_expired, payload_too_large, rate_limited, dependency_unavailable, kyc_legacy_endpoint_deprecated]
+        message:
+          type: string
+          description: Localized safe message; it contains no KYC document, path, URL, code, medical or email data.
+        details:
+          type: object
+          description: Field-level validation details only when safe to disclose.
+          additionalProperties: true
+        status_code:
+          type: integer
+          format: int32
+      additionalProperties: false
+  responses:
+    ValidationError:
+      description: Safe validation error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication required.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Permission or active KYC required.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Illegal state transition or idempotency conflict.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Gone:
+      description: Expired intent or challenge.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PayloadTooLarge:
+      description: Declared or verified file size exceeds allowed maximum.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: Safe quota response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unavailable:
+      description: Storage or scanner dependency unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

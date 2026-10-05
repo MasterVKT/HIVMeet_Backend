@@ -12,7 +12,9 @@ import logging
 from django.utils import timezone
 
 from .services import RecommendationService, MatchingService
+from .rewind_service import InteractionRewindService, RewindRejected
 from .daily_likes_service import DailyLikesService
+from profiles.photo_storage import profile_photo_delivery_url
 from .interaction_service import InteractionService
 from .serializers import (
     DiscoveryProfileSerializer,
@@ -21,7 +23,8 @@ from .serializers import (
     LikesReceivedSerializer,
     SearchFilterSerializer
 )
-from .models import Like, Boost
+from .models import Like, Boost, InteractionHistory
+from subscriptions.utils import check_feature_availability
 
 logger = logging.getLogger('hivmeet.matching')
 User = get_user_model()
@@ -43,9 +46,7 @@ def get_discovery_profiles(request):
     """
     user = request.user
     
-    # LOG 1: Utilisateur
-    logger.info(f"🔍 Discovery request - User: {user.display_name if hasattr(user, 'display_name') else user.email} ({user.email})")
-    logger.info(f"🔍 Is authenticated: {user.is_authenticated}")
+    logger.info("Discovery request received")
     
     if not user.is_authenticated:
         logger.error("❌ User not authenticated for discovery endpoint")
@@ -60,19 +61,6 @@ def get_discovery_profiles(request):
     
     # Calculate offset
     offset = (page - 1) * page_size
-    
-    # LOG 2: Préférences utilisateur
-    try:
-        user_profile = user.profile
-        logger.info(f"📋 User preferences:")
-        logger.info(f"   - Age range: {user_profile.age_min_preference}-{user_profile.age_max_preference}")
-        logger.info(f"   - Max distance: {user_profile.distance_max_km}km")
-        logger.info(f"   - Genders sought: {user_profile.genders_sought}")
-        logger.info(f"   - Verified only: {user_profile.verified_only}")
-        logger.info(f"   - Online only: {user_profile.online_only}")
-        logger.info(f"   - Allow in discovery: {user_profile.allow_profile_in_discovery}")
-    except Exception as e:
-        logger.warning(f"⚠️  Could not log user preferences: {str(e)}")
     
     # Get recommendations
     profiles = RecommendationService.get_recommendations(
@@ -111,6 +99,85 @@ def get_discovery_profiles(request):
         'is_premium': daily_likes_info.get('is_premium'),
         'super_likes_remaining': daily_likes_info.get('super_likes_remaining'),
     }, status=status.HTTP_200_OK)
+
+
+_REWINDABLE_INTERACTION_TYPES = (
+    InteractionHistory.LIKE,
+    InteractionHistory.SUPER_LIKE,
+    InteractionHistory.DISLIKE,
+)
+
+
+def _rewind_metadata(user, target_user):
+    """Attach a stable action id to every swipe response."""
+    interaction = (
+        InteractionHistory.objects.filter(
+            user=user,
+            target_user=target_user,
+            interaction_type__in=_REWINDABLE_INTERACTION_TYPES,
+            is_revoked=False,
+        )
+        .order_by('-created_at')
+        .first()
+    )
+    if interaction is None:
+        return {
+            'interaction_id': None,
+            'can_rewind': False,
+            'rewind_expires_at': None,
+        }
+
+    feature = check_feature_availability(user, 'rewind')
+    can_rewind = (
+        bool(feature.get('available'))
+        and InteractionRewindService.can_rewind(interaction)
+    )
+    return {
+        'interaction_id': str(interaction.id),
+        'can_rewind': can_rewind,
+        'rewind_expires_at': InteractionRewindService.expires_at(
+            interaction
+        ).isoformat(),
+    }
+
+
+def _rewind_response(user, interaction_id):
+    feature = check_feature_availability(user, 'rewind')
+    if not feature.get('available'):
+        return Response(
+            {
+                'error': True,
+                'code': 'premium_required',
+                'message': _('Rewind is a premium feature.'),
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        result = InteractionRewindService.rewind(user, interaction_id)
+    except RewindRejected as exc:
+        status_map = {
+            'interaction_not_found': status.HTTP_404_NOT_FOUND,
+            'match_exists_use_unmatch': status.HTTP_409_CONFLICT,
+            'rewind_daily_limit': status.HTTP_429_TOO_MANY_REQUESTS,
+            'rewind_expired': status.HTTP_410_GONE,
+            'interaction_not_active': status.HTTP_409_CONFLICT,
+            'interaction_projection_missing': status.HTTP_409_CONFLICT,
+        }
+        return Response(
+            {'error': True, 'code': exc.code, 'message': str(exc)},
+            status=status_map.get(exc.code, status.HTTP_400_BAD_REQUEST),
+        )
+
+    return Response(
+        {
+            'status': 'rewound',
+            'interaction_id': result.interaction_id,
+            'previous_profile': result.profile,
+            'already_rewound': result.already_rewound,
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(['POST'])
@@ -162,6 +229,7 @@ def like_profile(request):
             'daily_limit': status.HTTP_429_TOO_MANY_REQUESTS,
             'premium_required': status.HTTP_403_FORBIDDEN,
             'already_liked': status.HTTP_409_CONFLICT,
+            'match_exists_use_unmatch': status.HTTP_409_CONFLICT,
         }
         http_status = _error_status_map.get(error_code, status.HTTP_400_BAD_REQUEST)
         return Response({
@@ -179,17 +247,17 @@ def like_profile(request):
         from .models import Match
         match = Match.get_match_between(request.user, target_user)
         
-        logger.info(f"🎉 MATCH! {request.user.id} <-> {target_user.id}")
+        logger.info("Match created from discovery")
         
         # Log debug info
         DailyLikesService.log_status(request.user, "AFTER_MATCH")
         
-        # Safely get main photo URL (handle case where user has no photos)
+        # Safely get main photo URL (normalized — LOG-05)
         main_photo_url = None
         if hasattr(target_user, 'profile'):
             main_photo = target_user.profile.photos.filter(is_main=True).first()
             if main_photo:
-                main_photo_url = main_photo.photo_url
+                main_photo_url = profile_photo_delivery_url(main_photo, request)
         
         return Response({
             'status': 'matched',
@@ -201,17 +269,19 @@ def like_profile(request):
             },
             'daily_likes_remaining': daily_likes_remaining,
             'super_likes_remaining': super_likes_remaining,
+            **_rewind_metadata(request.user, target_user),
             'message': _("C'est un match!")
         }, status=status.HTTP_200_OK)
     
     # Log debug info
     DailyLikesService.log_status(request.user, "AFTER_LIKE")
-    logger.info(f"✅ Like successful - User: {request.user.id}, daily_likes_remaining: {daily_likes_remaining}")
+    logger.info("Like successful; remaining=%s", daily_likes_remaining)
     
     return Response({
         'status': 'liked',
         'daily_likes_remaining': daily_likes_remaining,
         'super_likes_remaining': super_likes_remaining,
+        **_rewind_metadata(request.user, target_user),
         'message': _("Like envoyé avec succès")
     }, status=status.HTTP_201_CREATED)
 
@@ -235,7 +305,7 @@ def dislike_profile(request):
     serializer = LikeActionSerializer(data=request.data)
     
     if not serializer.is_valid():
-        logger.warning(f"Dislike validation error - data: {request.data} - errors: {serializer.errors}")
+        logger.warning("Dislike validation error: %s", serializer.errors)
         return Response({
             'error': True,
             'message': _('Validation error'),
@@ -257,19 +327,32 @@ def dislike_profile(request):
     )
     
     if not success:
-        # Already passed on this profile — treat as success (idempotent)
-        pass
+        is_existing_match = error_msg == 'match_exists_use_unmatch'
+        return Response({
+            'error': True,
+            'message': (
+                _('This connection already exists. Use unmatch to remove it.')
+                if is_existing_match
+                else error_msg
+            ),
+            'code': 'match_exists_use_unmatch' if is_existing_match else 'daily_limit',
+        }, status=(
+            status.HTTP_409_CONFLICT
+            if is_existing_match
+            else status.HTTP_429_TOO_MANY_REQUESTS
+        ))
     
     # Obtenir les compteurs (inchangés par un dislike)
     daily_likes_remaining = DailyLikesService.get_likes_remaining(request.user)
     super_likes_remaining = DailyLikesService.get_super_likes_remaining(request.user)
     
-    logger.info(f"👎 Dislike sent - User: {request.user.id}, daily_likes_remaining: {daily_likes_remaining}")
+    logger.info("Dislike successful; remaining=%s", daily_likes_remaining)
     
     return Response({
         'status': 'disliked',
         'daily_likes_remaining': daily_likes_remaining,
-        'super_likes_remaining': super_likes_remaining
+        'super_likes_remaining': super_likes_remaining,
+        **_rewind_metadata(request.user, target_user),
     }, status=status.HTTP_201_CREATED)
 
 
@@ -291,12 +374,21 @@ def superlike_profile(request):
             "message": str (optional)
         }
     """
+    feature = check_feature_availability(request.user, 'super_like')
+    if not feature['available'] and feature['reason'] != 'limit_reached':
+        return Response({
+            'error': True,
+            'message': _('Super likes are a premium feature.'),
+            'code': 'premium_required',
+        }, status=status.HTTP_403_FORBIDDEN)
+
     # Vérifier si l'utilisateur peut encore super-liker
     can_super_like, error_msg = DailyLikesService.can_user_super_like(request.user)
     if not can_super_like:
         return Response({
             'error': True,
-            'message': error_msg
+            'message': error_msg,
+            'code': 'super_like_limit',
         }, status=status.HTTP_429_TOO_MANY_REQUESTS)
     
     serializer = LikeActionSerializer(data=request.data)
@@ -329,6 +421,7 @@ def superlike_profile(request):
     if not success:
         _error_status_map = {
             'daily_limit': status.HTTP_429_TOO_MANY_REQUESTS,
+            'super_like_limit': status.HTTP_429_TOO_MANY_REQUESTS,
             'premium_required': status.HTTP_403_FORBIDDEN,
             'already_liked': status.HTTP_409_CONFLICT,
         }
@@ -348,7 +441,7 @@ def superlike_profile(request):
         from .models import Match
         match = Match.get_match_between(request.user, target_user)
         
-        logger.info(f"🎉 SUPER LIKE MATCH! {request.user.id} <-> {target_user.id}")
+        logger.info("Super-like match created from discovery")
         
         # Log debug info
         DailyLikesService.log_status(request.user, "AFTER_SUPERLIKE_MATCH")
@@ -359,23 +452,29 @@ def superlike_profile(request):
             'matched_user_info': {
                 'user_id': str(target_user.id),
                 'display_name': target_user.display_name,
-                'main_photo_url': target_user.profile.photos.filter(
-                    is_main=True
-                ).first().photo_url if hasattr(target_user, 'profile') else None
+                'main_photo_url': (
+                    profile_photo_delivery_url(
+                        target_user.profile.photos.filter(is_main=True).first(), request,
+                    )
+                    if hasattr(target_user, 'profile') and target_user.profile.photos.exists()
+                    else None
+                )
             },
             'daily_likes_remaining': daily_likes_remaining,
             'super_likes_remaining': super_likes_remaining,
+            **_rewind_metadata(request.user, target_user),
             'message': _("C'est un match avec un super like!")
         }, status=status.HTTP_200_OK)
     
     # Log debug info
     DailyLikesService.log_status(request.user, "AFTER_SUPERLIKE")
-    logger.info(f"⭐ Super like successful - User: {request.user.id}, super_likes_remaining: {super_likes_remaining}")
+    logger.info("Super like successful; remaining=%s", super_likes_remaining)
     
     return Response({
         'status': 'superliked',
         'daily_likes_remaining': daily_likes_remaining,
         'super_likes_remaining': super_likes_remaining,
+        **_rewind_metadata(request.user, target_user),
         'message': _("Super like envoyé avec succès")
     }, status=status.HTTP_201_CREATED)
 
@@ -402,37 +501,53 @@ def get_interaction_status(request):
     """
     status_summary = DailyLikesService.get_status_summary(request.user)
     
-    logger.info(f"📊 Interaction status for {request.user.id}: daily_likes_remaining={status_summary['daily_likes_remaining']}")
+    logger.info(
+        "Interaction status returned; daily_likes_remaining=%s",
+        status_summary['daily_likes_remaining'],
+    )
     
     return Response(status_summary, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
+@transaction.atomic
+def rewind_interaction(request, interaction_id):
+    """Rewind one explicit interaction.
+
+    POST /api/v1/discovery/interactions/{interaction_id}/rewind/
+    """
+    return _rewind_response(request.user, interaction_id)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@transaction.atomic
 def rewind_last_swipe(request):
+    """Compatibility endpoint for older clients.
+
+    Current clients always call the explicit interaction endpoint. Keeping this
+    route avoids an unlocalized transport error while rollout is in progress.
     """
-    Rewind the last swipe (premium feature).
-    
-    POST /api/v1/discovery/interactions/rewind
-    """
-    if not request.user.is_premium:
-        return Response({
-            'error': True,
-            'message': _('Rewind is a premium feature.')
-        }, status=status.HTTP_403_FORBIDDEN)
-    
-    success, profile_data, error_msg = MatchingService.rewind_last_action(request.user)
-    
-    if not success:
-        return Response({
-            'error': True,
-            'message': error_msg
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    return Response({
-        'status': 'rewound',
-        'previous_profile': profile_data
-    }, status=status.HTTP_200_OK)
+    interaction = (
+        InteractionHistory.objects.filter(
+            user=request.user,
+            interaction_type__in=_REWINDABLE_INTERACTION_TYPES,
+            is_revoked=False,
+        )
+        .order_by('-created_at')
+        .first()
+    )
+    if interaction is None:
+        return Response(
+            {
+                'error': True,
+                'code': 'no_rewindable_interaction',
+                'message': _('No recent action to rewind.'),
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return _rewind_response(request.user, interaction.id)
 
 
 @api_view(['GET'])
@@ -443,7 +558,7 @@ def get_likes_received(request):
     
     GET /api/v1/discovery/interactions/liked-me
     """
-    if not request.user.is_premium:
+    if not check_feature_availability(request.user, 'see_likers')['available']:
         return Response({
             'error': True,
             'message': _('Viewing likes is a premium feature.')
@@ -475,7 +590,7 @@ def activate_boost(request):
     
     POST /api/v1/discovery/boost/activate
     """
-    if not request.user.is_premium:
+    if not check_feature_availability(request.user, 'boost')['available']:
         return Response({
             'error': True,
             'message': _('Boost is a premium feature.')
@@ -511,7 +626,7 @@ def activate_boost(request):
     # Create boost
     boost = Boost.objects.create(user=request.user)
     
-    logger.info(f"Boost activated for user: {request.user.email}")
+    logger.info("Boost activated")
     
     serializer = BoostSerializer(boost)
     
@@ -541,7 +656,7 @@ def update_discovery_filters(request):
         "online_only": false
     }
     """
-    logger.info(f"📝 Updating discovery filters for user: {request.user.id}")
+    logger.info("Updating discovery filters")
     
     # Check if user has a profile
     if not hasattr(request.user, 'profile'):
@@ -554,7 +669,7 @@ def update_discovery_filters(request):
     serializer = SearchFilterSerializer(data=request.data)
     
     if not serializer.is_valid():
-        logger.warning(f"❌ Invalid filter data: {serializer.errors}")
+        logger.warning("Invalid discovery filter data")
         return Response({
             'error': True,
             'message': _('Validation error'),
@@ -565,13 +680,7 @@ def update_discovery_filters(request):
     try:
         profile = serializer.update_profile_filters(request.user.profile)
         
-        logger.info(f"✅ Filters updated successfully for user: {request.user.id}")
-        logger.info(f"   - Age range: {profile.age_min_preference}-{profile.age_max_preference}")
-        logger.info(f"   - Max distance: {profile.distance_max_km}km")
-        logger.info(f"   - Genders: {profile.genders_sought}")
-        logger.info(f"   - Relationship types: {profile.relationship_types_sought}")
-        logger.info(f"   - Verified only: {profile.verified_only}")
-        logger.info(f"   - Online only: {profile.online_only}")
+        logger.info("Discovery filters updated successfully")
         
         return Response({
             'status': 'success',
@@ -587,8 +696,8 @@ def update_discovery_filters(request):
             }
         }, status=status.HTTP_200_OK)
         
-    except Exception as e:
-        logger.error(f"❌ Error updating filters: {str(e)}")
+    except Exception:
+        logger.exception("Error updating discovery filters")
         return Response({
             'error': True,
             'message': _('An error occurred while updating filters.')
@@ -603,7 +712,7 @@ def get_discovery_filters(request):
     
     GET /api/v1/discovery/filters/get
     """
-    logger.info(f"📖 Getting discovery filters for user: {request.user.id}")
+    logger.info("Getting discovery filters")
     
     # Check if user has a profile
     if not hasattr(request.user, 'profile'):

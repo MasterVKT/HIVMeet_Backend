@@ -14,8 +14,6 @@ import requests
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from django.utils import timezone
-from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
 from django.contrib.auth import get_user_model
 from django.db import transaction
 
@@ -25,6 +23,7 @@ django.setup()
 
 from authentication.models import User
 from profiles.models import Profile, ProfilePhoto
+from profiles.photo_storage import profile_photo_storage
 
 User = get_user_model()
 
@@ -360,6 +359,25 @@ def download_random_photo(gender, index):
         print(f"Erreur lors du téléchargement de la photo: {e}")
         return None
 
+def attach_private_test_photo(profile, image_data, *, is_main, order=0):
+    """Use the phase-2 private-media boundary for seed photos."""
+    stored = profile_photo_storage.upload_image(
+        image_data=image_data,
+        owner_id=str(profile.user_id),
+    )
+    return ProfilePhoto.objects.create(
+        profile=profile,
+        photo_url='',
+        thumbnail_url='',
+        storage_key=stored['storage_key'],
+        thumbnail_storage_key=stored['thumbnail_storage_key'],
+        storage_state=ProfilePhoto.PRIVATE,
+        is_main=is_main,
+        is_approved=True,
+        order=order,
+    )
+
+
 def create_test_user(user_data):
     """
     Crée un utilisateur de test avec son profil.
@@ -408,34 +426,15 @@ def create_test_user(user_data):
             # Télécharger et ajouter des photos
             photo_content = download_random_photo(user_data['gender'], len(User.objects.all()))
             if photo_content:
-                # Sauvegarder la photo principale
-                photo_filename = f"profile_photos/{user.id}_main.jpg"
-                saved_path = default_storage.save(photo_filename, ContentFile(photo_content))
-                
-                ProfilePhoto.objects.create(
-                    profile=profile,
-                    photo_url=saved_path,
-                    thumbnail_url=saved_path,
-                    is_main=True,
-                    order=0,
-                    is_approved=True
-                )
+                attach_private_test_photo(profile, photo_content, is_main=True)
                 
                 # Ajouter 1-3 photos supplémentaires pour les utilisateurs premium
                 if user_data['is_premium']:
                     for i in range(1, random.randint(2, 4)):
                         additional_photo = download_random_photo(user_data['gender'], i)
                         if additional_photo:
-                            additional_filename = f"profile_photos/{user.id}_additional_{i}.jpg"
-                            additional_saved_path = default_storage.save(additional_filename, ContentFile(additional_photo))
-                            
-                            ProfilePhoto.objects.create(
-                                profile=profile,
-                                photo_url=additional_saved_path,
-                                thumbnail_url=additional_saved_path,
-                                is_main=False,
-                                order=i,
-                                is_approved=True
+                            attach_private_test_photo(
+                                profile, additional_photo, is_main=False, order=i,
                             )
             
             # Définir la date premium si applicable
@@ -537,4 +536,4 @@ def main():
         print(f"   - {user.display_name} ({user.email}) - {status} - {premium}")
 
 if __name__ == "__main__":
-    main() 
+    main()

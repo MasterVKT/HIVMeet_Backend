@@ -7,9 +7,26 @@ from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
 from .models import Subscription, Transaction
+from .utils import invalidate_premium_status_cache
 from authentication.models import User
 
 logger = logging.getLogger('hivmeet.subscriptions.signals')
+
+
+@receiver(post_save, sender=User)
+def invalidate_premium_cache_on_user_change(sender, instance, **kwargs):
+    """Drop the cached premium status whenever the premium fields are written.
+
+    Covers every path that flips premium outside the subscription flow: admin
+    edits, expiry sweeps, maintenance scripts. Cache-only side effect, so it
+    cannot recurse into another save.
+    """
+    update_fields = kwargs.get('update_fields')
+    if update_fields is not None and not (
+        {'is_premium', 'premium_until'} & set(update_fields)
+    ):
+        return
+    invalidate_premium_status_cache(instance)
 
 
 @receiver(post_save, sender=Subscription)
@@ -22,7 +39,7 @@ def update_user_premium_status(sender, instance, created, **kwargs):
         instance.user.is_premium = True
         instance.user.premium_until = instance.current_period_end
         instance.user.save(update_fields=['is_premium', 'premium_until'])
-        logger.info(f"Premium status activated for user {instance.user.email}")
+        logger.info("Premium status activated")
     else:
         # Check if premium should be deactivated
         if instance.status in [Subscription.STATUS_CANCELED, Subscription.STATUS_EXPIRED]:
@@ -30,7 +47,12 @@ def update_user_premium_status(sender, instance, created, **kwargs):
                 instance.user.is_premium = False
                 instance.user.premium_until = None
                 instance.user.save(update_fields=['is_premium', 'premium_until'])
-                logger.info(f"Premium status deactivated for user {instance.user.email}")
+                logger.info("Premium status deactivated")
+
+    # Unconditional: any subscription write can change paid access, and a
+    # cancellation reaching this signal previously left the 5-minute cache
+    # untouched — the user kept premium features after losing them.
+    invalidate_premium_status_cache(instance.user)
 
 
 @receiver(pre_save, sender=Subscription)
@@ -48,7 +70,7 @@ def handle_subscription_status_change(sender, instance, **kwargs):
                 instance.status == Subscription.STATUS_CANCELED):
                 
                 # TODO: Send cancellation confirmation email
-                logger.info(f"Subscription canceled for user {instance.user.email}")
+                logger.info("Subscription canceled")
             
             # Check if status changed to active
             elif (old_instance.status != Subscription.STATUS_ACTIVE and
@@ -61,7 +83,7 @@ def handle_subscription_status_change(sender, instance, **kwargs):
                 instance.last_super_likes_reset = timezone.now()
                 
                 # TODO: Send activation confirmation email
-                logger.info(f"Subscription activated for user {instance.user.email}")
+                logger.info("Subscription activated")
                 
         except Subscription.DoesNotExist:
             pass
@@ -75,11 +97,11 @@ def handle_transaction_created(sender, instance, created, **kwargs):
     if created:
         if instance.type == Transaction.TYPE_PURCHASE and instance.status == Transaction.STATUS_SUCCEEDED:
             # TODO: Send purchase confirmation email
-            logger.info(f"Purchase transaction created for {instance.subscription.user.email}")
+            logger.info("Purchase transaction created")
         
         elif instance.type == Transaction.TYPE_REFUND and instance.status == Transaction.STATUS_SUCCEEDED:
             # TODO: Send refund confirmation email
-            logger.info(f"Refund processed for {instance.subscription.user.email}")
+            logger.info("Refund processed")
 
 
 # Signal to sync premium features with profile
@@ -95,6 +117,6 @@ def remove_premium_on_subscription_delete(sender, instance, **kwargs):
         user.is_premium = False
         user.premium_until = None
         user.save(update_fields=['is_premium', 'premium_until'])
-        logger.info(f"Premium status removed after subscription deletion for user {user.email}")
+        logger.info("Premium status removed after subscription deletion")
     except User.DoesNotExist:
         pass

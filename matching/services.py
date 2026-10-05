@@ -3,7 +3,7 @@ Matching and recommendation services.
 """
 from __future__ import annotations
 from django.contrib.auth import get_user_model
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q, F, Value, FloatField, ExpressionWrapper, Case, When, IntegerField
 from django.db.models.functions import Radians, Cos, Sin, ACos, Least
 from django.utils import timezone
@@ -13,15 +13,36 @@ import math
 import logging
 from typing import List, Optional, Tuple, TYPE_CHECKING
 
+from hivmeet_backend.utils import normalize_media_url
+
 if TYPE_CHECKING:
     from authentication.models import User as UserType
 
 from profiles.models import Profile
-from .models import Like, Dislike, Match, ProfileView, Boost, DailyLikeLimit, InteractionHistory
+from .models import (
+    Like,
+    Dislike,
+    Match,
+    ProfileView,
+    Boost,
+    DailyLikeLimit,
+    InteractionActionRejected,
+    InteractionHistory,
+)
+from .free_access import FreeMatchAccessService
 from .interaction_service import InteractionService
 
 logger = logging.getLogger('hivmeet.matching')
 User = get_user_model()
+
+
+class SwipeQuotaExceeded(Exception):
+    """Abort an action before a new interaction consumes a daily swipe."""
+
+    def __init__(self, message, code):
+        super().__init__(message)
+        self.message = message
+        self.code = code
 
 
 class RecommendationService:
@@ -82,10 +103,10 @@ class RecommendationService:
         Get profile recommendations for a user.
         """
         # LOG 1: Début
-        logger.info(f"🔍 get_recommendations - User: {user.email}, limit: {limit}, offset: {offset}")
+        logger.info("Recommendation request: limit=%s offset=%s", limit, offset)
         
         if not hasattr(user, 'profile'):
-            logger.warning(f"⚠️  User {user.email} has no profile")
+            logger.warning("Recommendation request has no profile")
             return []
         
         user_profile = user.profile
@@ -149,7 +170,8 @@ class RecommendationService:
             user__is_active=True,
             user__email_verified=True,
             is_hidden=False,
-            allow_profile_in_discovery=True
+            allow_profile_in_discovery=True,
+            gender__in=[Profile.MALE, Profile.FEMALE],
         ).exclude(
             user_id__in=excluded_ids
         )
@@ -165,7 +187,10 @@ class RecommendationService:
                 age_min_preference__lte=user_age,
                 age_max_preference__gte=user_age
             )
-            logger.info(f"   After mutual age compatibility (target accepts {user_age}y): {query.count()} profiles")
+            logger.debug(
+                "After mutual age compatibility: %s profiles",
+                query.count(),
+            )
         
         # Apply user's age preferences
         query = query.annotate(
@@ -174,13 +199,13 @@ class RecommendationService:
             user_age__gte=user_profile.age_min_preference,
             user_age__lte=user_profile.age_max_preference
         )
-        logger.info(f"   After user's age filter ({user_profile.age_min_preference}-{user_profile.age_max_preference}): {query.count()} profiles")
+        logger.debug("After age filter: %s profiles", query.count())
         
         # Apply gender preferences (mutual)
         # If genders_sought is empty list, it means "all" - no filter applied
         if user_profile.genders_sought:
             query = query.filter(gender__in=user_profile.genders_sought)
-            logger.info(f"   After user's gender filter (seeking {user_profile.genders_sought}): {query.count()} profiles")
+            logger.debug("After gender filter: %s profiles", query.count())
         
         # Apply mutual gender compatibility (target profile seeks user's gender)
         # Accept if: genders_sought is empty ([]), is NULL, or contains user's gender
@@ -190,7 +215,10 @@ class RecommendationService:
                 Q(genders_sought=[]) |  # Empty list means "all"
                 Q(genders_sought__isnull=True)  # NULL means no preference set (accept all)
             )
-            logger.info(f"   After mutual gender compatibility (target seeks {user_profile.gender} OR all): {query.count()} profiles")
+            logger.debug(
+                "After mutual gender compatibility: %s profiles",
+                query.count(),
+            )
         
         # Apply relationship type preferences
         # If relationship_types_sought is empty list, it means "all" - no filter applied
@@ -201,13 +229,16 @@ class RecommendationService:
             for rel_type in user_profile.relationship_types_sought:
                 relationship_filter |= Q(relationship_types_sought__contains=[rel_type])
             query = query.filter(relationship_filter)
-            logger.info(f"   After relationship type filter ({user_profile.relationship_types_sought}): {query.count()} profiles")
+            logger.debug(
+                "After relationship type filter: %s profiles",
+                query.count(),
+            )
         
         # Apply distance filter
         distance_filter = RecommendationService.get_distance_filter(user_profile)
         if distance_filter:
             query = query.filter(distance_filter)
-            logger.info(f"   After distance filter (max {user_profile.distance_max_km}km): {query.count()} profiles")
+            logger.debug("After distance filter: %s profiles", query.count())
         
         # Apply "verified only" filter
         if user_profile.verified_only:
@@ -347,253 +378,240 @@ class MatchingService:
         return DailyLikesService.can_user_like(user)
     
     @staticmethod
+    @transaction.atomic
     def like_profile(from_user: 'UserType', to_user: 'UserType', is_super_like: bool = False) -> Tuple[bool, bool, Optional[str], Optional[str]]:
-        """
-        Process a like action.
-        Returns (success, is_match, error_message, error_code).
-        error_code is one of: 'already_liked', 'premium_required', 'daily_limit', or None on success.
-        """
-        # Check if already liked — idempotent: treat as success, check for existing match
-        existing_like = Like.objects.filter(from_user=from_user, to_user=to_user).first()
-        if existing_like:
-            # Keep canonical InteractionHistory synchronized even for legacy rows
-            interaction_type = (
-                InteractionHistory.SUPER_LIKE
-                if existing_like.like_type == Like.SUPER
-                else InteractionHistory.LIKE
-            )
-            InteractionHistory.create_or_reactivate(
+        """Process a like under one lock order for every pair projection."""
+        if is_super_like:
+            from subscriptions.utils import check_feature_availability
+            feature = check_feature_availability(from_user, 'super_like')
+            if not feature['available']:
+                code = (
+                    'super_like_limit'
+                    if feature['reason'] == 'limit_reached'
+                    else 'premium_required'
+                )
+                return False, False, _("Super likes are a premium feature."), code
+
+        interaction_type = (
+            InteractionHistory.SUPER_LIKE
+            if is_super_like
+            else InteractionHistory.LIKE
+        )
+        expected_like_type = Like.SUPER if is_super_like else Like.REGULAR
+
+        # Historical deployments can have a Like/Match pair from before
+        # InteractionHistory was introduced. Retrying that exact old like is
+        # idempotent and must never recreate a deleted match. A different
+        # action still goes through the locked history path and is refused.
+        legacy_like = Like.objects.filter(
+            from_user=from_user,
+            to_user=to_user,
+            like_type=expected_like_type,
+        ).first()
+        legacy_match = Match.objects.filter(
+            Q(user1=from_user, user2=to_user)
+            | Q(user1=to_user, user2=from_user)
+        ).first()
+        if legacy_like is not None and legacy_match is not None:
+            return True, legacy_match.status == Match.ACTIVE, None, None
+
+        from .daily_likes_service import DailyLikesService
+
+        def check_quota():
+            can_swipe, error_msg = DailyLikesService.can_user_swipe(from_user)
+            if not can_swipe:
+                raise SwipeQuotaExceeded(error_msg, 'daily_limit')
+            if is_super_like:
+                can_super_like, error_msg = DailyLikesService.can_user_super_like(
+                    from_user
+                )
+                if not can_super_like:
+                    raise SwipeQuotaExceeded(error_msg, 'super_like_limit')
+
+        try:
+            _interaction, created_interaction = InteractionHistory.create_or_reactivate(
                 user=from_user,
                 target_user=to_user,
                 interaction_type=interaction_type,
+                before_create=check_quota,
             )
-            is_match = Like.objects.filter(from_user=to_user, to_user=from_user).exists()
-            # If mutual like exists, ensure match is active (reactivate if was deleted)
-            if is_match:
-                if from_user.id < to_user.id:
-                    u1, u2 = from_user, to_user
-                else:
-                    u1, u2 = to_user, from_user
-                match, created = Match.objects.get_or_create(
-                    user1=u1, user2=u2,
-                    defaults={'status': Match.ACTIVE}
-                )
-                if not created and match.status != Match.ACTIVE:
-                    match.status = Match.ACTIVE
-                    match.save(update_fields=['status'])
-                    logger.info(f"Match reactivated between {u1.email} and {u2.email}")
-            return True, is_match, None, None
-
-        # Check daily limits
-        if is_super_like:
-            from .daily_likes_service import DailyLikesService
-
-            can_super_like, error_msg = DailyLikesService.can_user_super_like(from_user)
-            if not can_super_like:
-                return False, False, error_msg, 'daily_limit'
-
-            # Keep legacy counter for backward compatibility dashboards.
-            today = date.today()
-            limit, created = DailyLikeLimit.objects.get_or_create(
-                user=from_user,
-                date=today
+        except SwipeQuotaExceeded as error:
+            return False, False, error.message, error.code
+        except InteractionActionRejected as error:
+            return (
+                False,
+                False,
+                _("This connection already exists. Use unmatch to remove it."),
+                error.code,
             )
-            limit.super_likes_count += 1
-            limit.save(update_fields=['super_likes_count'])
-        else:
-            can_like, error_msg = MatchingService.can_user_like(from_user)
-            if not can_like:
-                return False, False, error_msg, 'daily_limit'
-            
-            # Update daily count
-            today = date.today()
-            limit, created = DailyLikeLimit.objects.get_or_create(
-                user=from_user,
-                date=today
-            )
-            limit.likes_count += 1
-            limit.save()
-        
-        # Create like
-        like = Like.objects.create(
-            from_user=from_user,
-            to_user=to_user,
-            like_type=Like.SUPER if is_super_like else Like.REGULAR
+
+        # InteractionHistory already locked the two users and their pair.
+        # Rewind takes these projection locks after the same locks, so neither
+        # path can delete the other action's Like/Dislike projection.
+        existing_like = (
+            Like.objects.select_for_update()
+            .filter(from_user=from_user, to_user=to_user)
+            .first()
         )
-        
-        # Record in interaction history
-        interaction_type = InteractionHistory.SUPER_LIKE if is_super_like else InteractionHistory.LIKE
-        InteractionHistory.create_or_reactivate(
-            user=from_user,
-            target_user=to_user,
-            interaction_type=interaction_type
+        existing_dislike = (
+            Dislike.objects.select_for_update()
+            .filter(from_user=from_user, to_user=to_user)
+            .first()
         )
-        
-        # Check for mutual like (match)
-        mutual_like = Like.objects.filter(
-            from_user=to_user,
-            to_user=from_user
-        ).first()
-        
+        if existing_dislike is not None:
+            existing_dislike.delete()
+
+        like_was_created = existing_like is None
+        if existing_like is None:
+            Like.objects.create(
+                from_user=from_user,
+                to_user=to_user,
+                like_type=expected_like_type,
+            )
+        elif existing_like.like_type != expected_like_type:
+            existing_like.like_type = expected_like_type
+            existing_like.save(update_fields=['like_type'])
+
+        if created_interaction:
+            # The authoritative quota is InteractionHistory. The check above
+            # occurred before the new row was saved; this legacy row remains
+            # for dashboard compatibility only.
+            limit, _limit_created = DailyLikeLimit.objects.select_for_update().get_or_create(
+                user=from_user,
+                date=timezone.localdate(),
+            )
+            if is_super_like:
+                limit.super_likes_count += 1
+                limit.save(update_fields=['super_likes_count'])
+            else:
+                limit.likes_count += 1
+                limit.save(update_fields=['likes_count'])
+
+        mutual_like = (
+            Like.objects.select_for_update()
+            .filter(from_user=to_user, to_user=from_user)
+            .first()
+        )
         if mutual_like:
-            # Create match
-            # Ensure consistent ordering for unique constraint
             if from_user.id < to_user.id:
                 user1, user2 = from_user, to_user
             else:
                 user1, user2 = to_user, from_user
-            
-            match, created = Match.objects.get_or_create(
-                user1=user1,
-                user2=user2,
-                defaults={'status': Match.ACTIVE}
+
+            match = (
+                Match.objects.select_for_update()
+                .filter(
+                    Q(user1=from_user, user2=to_user)
+                    | Q(user1=to_user, user2=from_user)
+                )
+                .first()
             )
-            
-            # If match already existed but was deleted (unmatched), reactivate it
-            if not created and match.status != Match.ACTIVE:
-                match.status = Match.ACTIVE
-                match.save(update_fields=['status'])
-                created = True
-                logger.info(f"Match reactivated between {user1.email} and {user2.email}")
-            
-            if created:
-                logger.info(f"Match created between {user1.email} and {user2.email}")
-                
-                # TODO: Send match notifications
-                
+            created_match = match is None
+            if match is None:
+                match = Match.objects.create(
+                    user1=user1,
+                    user2=user2,
+                    status=Match.ACTIVE,
+                )
+            if not created_match and match.status != Match.ACTIVE:
+                return True, False, None, None
+            if created_match:
+                FreeMatchAccessService.initialize_new_match(match)
+                logger.info('Match created')
             return True, True, None, None
-        
-        # Update likes received count
-        if hasattr(to_user, 'profile'):
+
+        if like_was_created and hasattr(to_user, 'profile'):
             to_user.profile.likes_received += 1
             to_user.profile.save(update_fields=['likes_received'])
-        
+
         return True, False, None, None
-    
+
     @staticmethod
+    @transaction.atomic
     def dislike_profile(from_user: 'UserType', to_user: 'UserType') -> Tuple[bool, Optional[str]]:
-        """
-        Process a dislike (pass) action.
-        Handles both new dislikes and reactivation of expired ones.
-        Returns (success, error_message).
-        """
-        # Check if there's an active (non-expired) dislike
-        existing_active = Dislike.objects.filter(
-            from_user=from_user,
-            to_user=to_user,
-            expires_at__gt=timezone.now()
-        ).first()
-        
-        if existing_active:
-            # Idempotent success while ensuring canonical history is present/recent
-            InteractionHistory.create_or_reactivate(
+        """Process a pass with the same pair locks as a like and a rewind."""
+        from .daily_likes_service import DailyLikesService
+
+        def check_quota():
+            can_swipe, error_msg = DailyLikesService.can_user_swipe(from_user)
+            if not can_swipe:
+                raise SwipeQuotaExceeded(error_msg, 'daily_limit')
+
+        try:
+            _interaction, created_interaction = InteractionHistory.create_or_reactivate(
                 user=from_user,
                 target_user=to_user,
-                interaction_type=InteractionHistory.DISLIKE
+                interaction_type=InteractionHistory.DISLIKE,
+                before_create=check_quota,
             )
-            return True, None
-        
-        # Use update_or_create to handle expired dislikes
-        # This prevents IntegrityError when reactivating expired dislikes
-        dislike, created = Dislike.objects.update_or_create(
-            from_user=from_user,
-            to_user=to_user,
-            defaults={
-                'expires_at': timezone.now() + timedelta(days=30)
-            }
+        except SwipeQuotaExceeded as error:
+            return False, error.message
+        except InteractionActionRejected as error:
+            return False, error.code
+
+        existing_like = (
+            Like.objects.select_for_update()
+            .filter(from_user=from_user, to_user=to_user)
+            .first()
         )
-        
-        # Record in interaction history
-        InteractionHistory.create_or_reactivate(
-            user=from_user,
-            target_user=to_user,
-            interaction_type=InteractionHistory.DISLIKE
+        existing_dislike = (
+            Dislike.objects.select_for_update()
+            .filter(from_user=from_user, to_user=to_user)
+            .first()
         )
-        
+        if existing_like is not None:
+            existing_like.delete()
+            if hasattr(to_user, 'profile'):
+                to_user.profile.likes_received = max(
+                    0, to_user.profile.likes_received - 1
+                )
+                to_user.profile.save(update_fields=['likes_received'])
+
+        expiry = timezone.now() + timedelta(days=30)
+        if existing_dislike is None:
+            Dislike.objects.create(
+                from_user=from_user,
+                to_user=to_user,
+                expires_at=expiry,
+            )
+        elif existing_dislike.expires_at <= timezone.now() or created_interaction:
+            existing_dislike.expires_at = expiry
+            existing_dislike.save(update_fields=['expires_at'])
+
         return True, None
-    
+
     @staticmethod
     def rewind_last_action(user: 'UserType') -> Tuple[bool, Optional[dict], Optional[str]]:
+        """Legacy adapter for callers not yet carrying an interaction id.
+
+        The discovery API no longer uses this method. It delegates to the
+        explicit transactional service so a legacy caller cannot bypass match,
+        expiry, idempotency or quota protections.
         """
-        Rewind (undo) the last swipe action.
-        Returns (success, previous_profile_data, error_message).
-        """
-        if not user.is_premium:
-            return False, None, _("Rewind is a premium feature.")
-        
-        # Check daily limit
-        today = date.today()
-        limit, created = DailyLikeLimit.objects.get_or_create(
-            user=user,
-            date=today
+        from .rewind_service import InteractionRewindService, RewindRejected
+
+        interaction = (
+            InteractionHistory.objects.filter(
+                user=user,
+                interaction_type__in=(
+                    InteractionHistory.LIKE,
+                    InteractionHistory.SUPER_LIKE,
+                    InteractionHistory.DISLIKE,
+                ),
+                is_revoked=False,
+            )
+            .order_by('-created_at')
+            .first()
         )
-        
-        if not limit.has_rewinds_remaining():
-            return False, None, _("Daily limit of 3 rewinds reached.")
-        
-        # Find last action (within 5 minutes)
-        five_minutes_ago = timezone.now() - timedelta(minutes=5)
-        
-        # Check likes
-        last_like = Like.objects.filter(
-            from_user=user,
-            created_at__gte=five_minutes_ago
-        ).order_by('-created_at').first()
-        
-        # Check dislikes
-        last_dislike = Dislike.objects.filter(
-            from_user=user,
-            created_at__gte=five_minutes_ago
-        ).order_by('-created_at').first()
-        
-        # Determine which was more recent
-        if last_like and last_dislike:
-            if last_like.created_at > last_dislike.created_at:
-                last_action = last_like
-                action_type = 'like'
-            else:
-                last_action = last_dislike
-                action_type = 'dislike'
-        elif last_like:
-            last_action = last_like
-            action_type = 'like'
-        elif last_dislike:
-            last_action = last_dislike
-            action_type = 'dislike'
-        else:
+        if interaction is None:
             return False, None, _("No recent action to rewind.")
-        
-        # Get profile data before deletion
-        profile = last_action.to_user.profile
-        profile_data = {
-            'user_id': str(last_action.to_user.id),
-            'display_name': last_action.to_user.display_name,
-            'age': last_action.to_user.age,
-            'bio': profile.bio,
-            'photos': [
-                {
-                    'url': photo.photo_url,
-                    'thumbnail_url': photo.thumbnail_url
-                }
-                for photo in profile.photos.all()
-            ]
-        }
-        
-        # Delete the action
-        if action_type == 'like':
-            # Check if this broke a match
-            match = Match.get_match_between(user, last_action.to_user)
-            if match:
-                match.delete()
-        
-        last_action.delete()
-        
-        # Update rewind count
-        limit.rewinds_count += 1
-        limit.save()
-        
-        return True, profile_data, None
-    
+
+        try:
+            result = InteractionRewindService.rewind(user, interaction.id)
+        except RewindRejected as exc:
+            return False, None, exc.code
+        return True, result.profile, None
+
     @staticmethod
     def get_daily_like_limit(user: 'UserType') -> dict:
         """
