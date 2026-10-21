@@ -1,0 +1,16 @@
+.git/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+test_media/
+media/
+private_uploads/
+staticfiles/
+celerybeat-schedule*
+*.log
+check_output.txt
+pip_install_output.log
+.env
+credentials/

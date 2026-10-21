@@ -10,7 +10,7 @@ Couvre :
 """
 import json
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
@@ -24,6 +24,7 @@ from matching.models import Like, Match
 from notifications.consumers import UserNotificationConsumer
 from notifications.models import Notification
 from notifications.payloads import like_payload, match_payload, message_payload
+from profiles.test_support import grant_social_access
 
 User = get_user_model()
 
@@ -43,6 +44,7 @@ def make_user(email, display_name, is_premium=False):
     )
     user.is_premium = is_premium
     user.save(update_fields=['is_premium'])
+    grant_social_access(user)
     return user
 
 
@@ -451,6 +453,11 @@ class TestUserNotificationConsumerEvents(TestCase):
 
     def setUp(self):
         self.consumer = UserNotificationConsumer()
+        # This class exercises outbound frame shapes directly. Authentication
+        # and KYC admission are covered by socket integration tests; mocking
+        # the admission check keeps this synchronous TestCase out of a worker
+        # thread with an uncommitted test transaction.
+        self.consumer._has_active_kyc = AsyncMock(return_value=True)
         self.sent = []
 
         async def _capture(text_data=None, **kwargs):

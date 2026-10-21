@@ -5,5 +5,6 @@
     ".github/hooks": false,
     ".claude/settings.json": false,
     ".claude/settings.local.json": false
-  }
+  },
+  "antigravity.serverStartupTimeoutMs": 300000
 }

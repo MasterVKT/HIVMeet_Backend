@@ -6,6 +6,7 @@ from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from matching.models import Dislike, InteractionHistory, Like
+from matching.test_support import grant_social_access
 
 
 User = get_user_model()
@@ -43,6 +44,7 @@ class DiscoveryInteractionPersistenceTests(APITestCase):
         self.target.profile.allow_profile_in_discovery = True
         self.target.profile.save()
 
+        grant_social_access(self.actor, self.target)
         self.client.force_authenticate(user=self.actor)
 
     def test_like_endpoint_backfills_history_when_legacy_like_exists(self):

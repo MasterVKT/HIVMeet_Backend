@@ -1,0 +1,109 @@
+# French translation of the HIVMeet back-office.
+# Msgids are English (gettext_lazy), French is the default language.
+msgid ""
+msgstr ""
+"Project-Id-Version: HIVMeet back-office\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-08 21:15+0100\n"
+"PO-Revision-Date: 2026-10-08 21:30+0100\n"
+"Last-Translator: \n"
+"Language-Team: French\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "HIVMeet back-office"
+msgstr "Back-office HIVMeet"
+
+msgid "Email address"
+msgstr "Adresse e-mail"
+
+msgid "Password"
+msgstr "Mot de passe"
+
+msgid "Actor"
+msgstr "Acteur"
+
+msgid "Actor reference"
+msgstr "Référence de l'acteur"
+
+msgid "Action"
+msgstr "Action"
+
+msgid "Target type"
+msgstr "Type de cible"
+
+msgid "Target identifier"
+msgstr "Identifiant de la cible"
+
+msgid "Reason"
+msgstr "Motif"
+
+msgid "Metadata"
+msgstr "Métadonnées"
+
+msgid "IP hash"
+msgstr "Empreinte IP"
+
+msgid "Created at"
+msgstr "Créé le"
+
+msgid "Staff audit entry"
+msgstr "Entrée d'audit du personnel"
+
+msgid "Staff audit entries"
+msgstr "Entrées d'audit du personnel"
+
+msgid "Sign out"
+msgstr "Se déconnecter"
+
+msgid "Restricted area. Every action is logged."
+msgstr "Zone réservée. Chaque action est journalisée."
+
+msgid "Access denied"
+msgstr "Accès refusé"
+
+msgid "You do not have access to this page. This attempt has been logged."
+msgstr "Vous n'avez pas accès à cette page. Cette tentative a été journalisée."
+
+msgid "Back to home"
+msgstr "Retour à l'accueil"
+
+msgid "Home"
+msgstr "Accueil"
+
+#, python-format
+msgid "Signed in as %(name)s."
+msgstr "Connecté en tant que %(name)s."
+
+msgid "Your roles"
+msgstr "Vos rôles"
+
+msgid "Modules are enabled progressively according to your roles."
+msgstr "Les modules sont activés progressivement selon vos rôles."
+
+msgid "Sign in"
+msgstr "Se connecter"
+
+msgid "Continue"
+msgstr "Continuer"
+
+msgid "A second verification step is required after the password."
+msgstr "Une seconde étape de vérification est requise après le mot de passe."
+
+msgid "Second verification step"
+msgstr "Seconde étape de vérification"
+
+msgid "The second verification step is not available yet. Access is refused."
+msgstr "La seconde étape de vérification n'est pas encore disponible. L'accès est refusé."
+
+msgid "Back to sign in"
+msgstr "Retour à la connexion"
+
+msgid "Invalid credentials or access not permitted."
+msgstr "Identifiants invalides ou accès non autorisé."
+
+msgid "Too many attempts. Try again later."
+msgstr "Trop de tentatives. Réessayez plus tard."

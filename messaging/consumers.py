@@ -500,6 +500,8 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 access_token = AccessToken(token)
                 user_id = access_token['user_id']
                 self.user = await database_sync_to_async(User.objects.get)(id=user_id)
+                if not self.user.email_verified:
+                    self.user = None
             except (InvalidToken, TokenError, User.DoesNotExist):
                 self.user = None
                 

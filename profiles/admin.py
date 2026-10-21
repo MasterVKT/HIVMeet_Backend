@@ -4,7 +4,14 @@ Admin configuration for profiles app.
 from django.utils import timezone
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
-from .models import Profile, ProfilePhoto, Verification, DataExportRequest, AccountDeletionRequest
+from .models import (
+    AccountDeletionRequest,
+    DataExportRequest,
+    KycDecisionEmailDelivery,
+    Profile,
+    ProfilePhoto,
+    Verification,
+)
 
 
 @admin.register(Profile)
@@ -130,3 +137,28 @@ class AccountDeletionRequestAdmin(admin.ModelAdmin):
             process_account_deletion.delay(str(deletion_request.id))
         self.message_user(request, _('Selected deletion requests will be processed immediately.'))
     force_process_deletion.short_description = _('Force immediate account deletion')
+
+
+@admin.register(KycDecisionEmailDelivery)
+class KycDecisionEmailDeliveryAdmin(admin.ModelAdmin):
+    """Read-only operational view without recipient or KYC-decision content."""
+
+    list_display = [
+        'decision_id', 'status', 'attempt_count', 'last_error_code',
+        'next_attempt_at', 'sent_at', 'updated_at',
+    ]
+    list_filter = ['status']
+    readonly_fields = [
+        'decision', 'status', 'attempt_count', 'last_error_code',
+        'next_attempt_at', 'sending_started_at', 'sent_at', 'created_at',
+        'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

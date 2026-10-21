@@ -1,7 +1,7 @@
 """
 Authentication views for HIVMeet API.
 """
-from datetime import date, timedelta
+from datetime import timedelta
 from rest_framework import status, generics
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -26,7 +26,6 @@ from .serializers import (
     FCMTokenSerializer
 )
 from .utils import (
-    send_verification_email,
     send_password_reset_email,
     send_welcome_email
 )
@@ -48,6 +47,58 @@ User = get_user_model()
 def _firebase_service():
     from hivmeet_backend.firebase_service import firebase_service
     return firebase_service
+
+
+def _serializer_error_codes(errors):
+    """Return ``{field: [code, ...]}`` without exposing submitted values.
+
+    The mobile client localises these stable codes; raw validator messages
+    remain available in ``details`` for compatibility, but the client never
+    displays backend strings directly.
+    """
+    codes = {}
+    for field, details in errors.items():
+        if isinstance(details, dict):
+            codes[field] = _serializer_error_codes(details)
+        else:
+            codes[field] = [
+                getattr(detail, 'code', 'invalid') for detail in details
+            ]
+    return codes
+
+
+def _email_not_verified_response():
+    """Use one stable, localisable error contract for every entry point."""
+    return Response(
+        {
+            'code': 'email_not_verified',
+            'message': _('Verify your email address before signing in.'),
+        },
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _sync_email_verification_from_firebase(user):
+    """Synchronise the local projection without creating or linking accounts.
+
+    Password login and refresh tokens do not carry a fresh Firebase claim.  A
+    Firebase user-record lookup keeps those legacy paths from becoming a way
+    around Firebase verification.  Callers deliberately fail closed if this
+    lookup is unavailable.
+    """
+    if not user.firebase_uid:
+        return False
+
+    firebase_user = _firebase_service().get_user(user.firebase_uid)
+    firebase_email = str(getattr(firebase_user, 'email', '')).strip().lower()
+    if not firebase_email or firebase_email != user.email.lower():
+        return False
+
+    firebase_verified = getattr(firebase_user, 'email_verified', False) is True
+    if user.email_verified != firebase_verified:
+        user.email_verified = firebase_verified
+        user.save(update_fields=['email_verified', 'updated_at'])
+    return firebase_verified
 
 
 def generate_tokens(user, remember_me=False):
@@ -89,53 +140,49 @@ class FirebaseLoginView(APIView):
             decoded_token = firebase_auth.verify_id_token(id_token)
             uid = decoded_token.get('uid')
             email = decoded_token.get('email')
-            name = decoded_token.get('name', '')
-            email_verified = decoded_token.get('email_verified', False)
+            email_verified = decoded_token.get('email_verified') is True
             if not uid or not email:
                 return Response(
                     {'code': 'invalid_firebase_identity', 'message': _('Firebase email is required.')},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            if not email_verified:
+                return _email_not_verified_response()
+
             with transaction.atomic():
                 user = User.objects.select_for_update().filter(firebase_uid=uid).first()
                 if user is None:
                     user = User.objects.select_for_update().filter(email__iexact=email).first()
                     if user is None:
-                        if settings.HIVMEET_REQUIRE_EXPLICIT_REGISTRATION:
-                            # A token is not registration data: never invent a
-                            # birth date, display name or profile from it.
-                            return Response(
-                                {'code': 'registration_required', 'message': _('Complete registration before signing in.')},
-                                status=status.HTTP_409_CONFLICT,
-                            )
-                        # One release-only bridge for installations upgrading
-                        # from Firebase-first signup. Its blank gender keeps
-                        # the profile out of Discovery until confirmation.
-                        display_name = str(name).strip()[:30] or str(email).split('@', 1)[0][:30]
-                        user = User.objects.create(
-                            email=str(email).lower(), firebase_uid=uid,
-                            display_name=display_name or 'Member',
-                            birth_date=date(1990, 1, 1),
-                            email_verified=bool(email_verified), is_active=True,
+                        # An ID token is authentication proof, not complete
+                        # registration data. Never recreate an account here.
+                        return Response(
+                            {'code': 'registration_required', 'message': _('Complete registration before signing in.')},
+                            status=status.HTTP_409_CONFLICT,
                         )
-                    else:
-                        if user.firebase_uid:
-                            return Response(
-                                {'code': 'firebase_uid_mismatch', 'message': _('Firebase identity does not match this account.')},
-                                status=status.HTTP_409_CONFLICT,
-                            )
-                        # Compatibility bridge for a pre-rollout local account;
-                        # it links identity but never creates an account.
-                        user.firebase_uid = uid
-                        user.save(update_fields=['firebase_uid', 'updated_at'])
+                    if user.firebase_uid:
+                        return Response(
+                            {'code': 'firebase_uid_mismatch', 'message': _('Firebase identity does not match this account.')},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    # Compatibility bridge for a pre-rollout local account;
+                    # it links identity but never creates an account.
+                    user.firebase_uid = uid
+                    user.save(update_fields=['firebase_uid', 'updated_at'])
                 elif user.email.lower() != str(email).lower():
                     return Response(
                         {'code': 'firebase_uid_mismatch', 'message': _('Firebase identity does not match this account.')},
                         status=status.HTTP_409_CONFLICT,
                     )
 
-                if email_verified and not user.email_verified:
+                if not user.is_active:
+                    return Response(
+                        {'code': 'account_disabled', 'message': _('Account is disabled.')},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
+                if not user.email_verified:
                     user.email_verified = True
                     user.save(update_fields=['email_verified', 'updated_at'])
                 user.update_last_active()
@@ -166,7 +213,7 @@ class FirebaseLoginView(APIView):
                 return Response({'code': 'firebase_token_expired', 'message': _('Firebase token expired.')}, status=status.HTTP_400_BAD_REQUEST)
             if 'invalid' in message or 'verify' in message:
                 return Response({'code': 'firebase_token_invalid', 'message': _('Invalid Firebase token.')}, status=status.HTTP_400_BAD_REQUEST)
-            logger.exception('Firebase token exchange failed')
+            logger.error('Firebase token exchange failed')
             return Response({'code': 'firebase_exchange_failed', 'message': _('Unable to sign in right now.')}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
@@ -176,10 +223,19 @@ def register_view(request):
     """Provision Firebase and the local account as one compensating operation."""
     serializer = UserRegistrationSerializer(data=request.data)
     if not serializer.is_valid():
+        field_errors = _serializer_error_codes(serializer.errors)
+        # Field names and validator codes only: never log submitted values.
+        logger.warning(
+            'Registration validation failed fields=%s codes=%s',
+            sorted(field_errors),
+            field_errors,
+        )
         return Response({
             'error': True,
+            'code': 'registration_invalid',
             'message': _('Validation error'),
             'details': serializer.errors,
+            'field_errors': field_errors,
         }, status=status.HTTP_400_BAD_REQUEST)
 
     firebase_user = None
@@ -193,30 +249,18 @@ def register_view(request):
         )
         with transaction.atomic():
             user = serializer.save(firebase_uid=firebase_user.uid)
-            verification_token = generate_verification_token()
-            cache.set(f'email_verify_{verification_token}', user.id, timeout=86400)
-        verification_link = f'{settings.FRONTEND_URL}/verify-email/{verification_token}'
-        try:
-            send_verification_email(user, verification_link)
-        except Exception:
-            # Account creation has committed.  A transient mail failure must
-            # not delete only the Firebase identity and leave the local user
-            # orphaned; the existing resend endpoint can recover delivery.
-            logger.exception('Verification email delivery failed for account %s', user.id)
-        logger.info('Registered account %s', user.id)
         return Response({
             'user_id': str(user.id),
-            'email': user.email,
-            'display_name': user.display_name,
-            'message': _('Registration successful. Please verify your email.'),
+            'verification_required': True,
+            'message': _('Registration successful. Email verification is required.'),
         }, status=status.HTTP_201_CREATED)
     except Exception:
         if firebase_user is not None:
             try:
                 _firebase_service().delete_user(firebase_user.uid)
             except Exception:
-                logger.exception('Firebase registration compensation failed')
-        logger.exception('Registration failed')
+                logger.error('Firebase registration compensation failed')
+        logger.error('Registration failed')
         return Response({
             'code': 'registration_failed',
             'message': _('Registration failed. Please try again.'),
@@ -244,28 +288,26 @@ def verify_email_view(request, verification_token):
         firebase_service = _firebase_service()
         user = User.objects.get(id=user_id)
         
-        if user.email_verified:
-            return Response({
-                'message': _('Email already verified.')
-            }, status=status.HTTP_200_OK)
-        
-        # Verify email
-        user.email_verified = True
-        user.save()
-        
-        # Update Firebase user
+        # This route is retained only for links issued by older releases.  The
+        # Firebase record is updated first so the source of truth cannot lag
+        # behind the local projection if the transaction fails.
         firebase_service.update_user(
             user.firebase_uid,
             email_verified=True
         )
-        
-        # Delete cache key
-        cache.delete(cache_key)
-        
-        # Send welcome email
-        send_welcome_email(user)
-        
-        logger.info(f"Email verified for user: {user.email}")
+
+        with transaction.atomic():
+            if not user.email_verified:
+                user.email_verified = True
+                user.save(update_fields=['email_verified', 'updated_at'])
+            cache.delete(cache_key)
+
+        try:
+            send_welcome_email(user)
+        except Exception:
+            # Verification already succeeded.  Welcome-mail delivery is not a
+            # reason to reverse either verified state.
+            logger.error('Welcome email delivery failed after verification')
         
         return Response({
             'message': _('Email verified successfully. You can now log in.')
@@ -276,8 +318,8 @@ def verify_email_view(request, verification_token):
             'error': True,
             'message': _('User not found.')
         }, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        logger.error(f"Email verification error: {str(e)}")
+    except Exception:
+        logger.error('Legacy email verification failed')
         return Response({
             'error': True,
             'message': _('Verification failed. Please try again.')
@@ -321,11 +363,15 @@ def login_view(request):
                 'message': _('Account is disabled.')
             }, status=status.HTTP_403_FORBIDDEN)
         
-        if not user.email_verified:
-            return Response({
-                'error': True,
-                'message': _('Please verify your email before logging in.')
-            }, status=status.HTTP_403_FORBIDDEN)
+        try:
+            if not _sync_email_verification_from_firebase(user):
+                return _email_not_verified_response()
+        except Exception:
+            logger.error('Firebase verification lookup failed during password login')
+            return Response(
+                {'code': 'firebase_verification_unavailable', 'message': _('Unable to sign in right now.')},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         
         # Update last login
         user.last_login = timezone.now()
@@ -337,7 +383,7 @@ def login_view(request):
         # Serialize user data
         user_data = UserSerializer(user).data
         
-        logger.info(f"User logged in: {user.email}")
+        logger.info('Password login completed')
         
         return Response({
             'access_token': tokens['access_token'],
@@ -345,8 +391,8 @@ def login_view(request):
             'user': user_data
         }, status=status.HTTP_200_OK)
         
-    except Exception as e:
-        logger.error(f"Login error: {str(e)}")
+    except Exception:
+        logger.error('Password login failed')
         return Response({
             'error': True,
             'message': _('Login failed. Please try again.')
@@ -385,11 +431,11 @@ def forgot_password_view(request):
         reset_link = f"{settings.FRONTEND_URL}/reset-password/{reset_token}"
         send_password_reset_email(user, reset_link)
         
-        logger.info(f"Password reset requested for: {email}")
+        logger.info('Password reset requested')
         
     except User.DoesNotExist:
         # Don't reveal that the email doesn't exist
-        logger.warning(f"Password reset requested for non-existent email: {email}")
+        logger.warning('Password reset requested for unknown account')
     
     return Response({
         'message': _('If an account with this email exists, a password reset link has been sent.')
@@ -442,7 +488,7 @@ def reset_password_view(request):
         # Delete cache key
         cache.delete(cache_key)
         
-        logger.info(f"Password reset successful for: {user.email}")
+        logger.info('Password reset completed')
         
         return Response({
             'message': _('Password reset successfully. You can now log in with your new password.')
@@ -453,8 +499,8 @@ def reset_password_view(request):
             'error': True,
             'message': _('User not found.')
         }, status=status.HTTP_404_NOT_FOUND)
-    except Exception as e:
-        logger.error(f"Password reset error: {str(e)}")
+    except Exception:
+        logger.error('Password reset failed')
         return Response({
             'error': True,
             'message': _('Password reset failed. Please try again.')
@@ -484,7 +530,25 @@ def refresh_token_view(request):
         # Verify and refresh token
         refresh = RefreshToken(refresh_token)
         
-        # Get new tokens
+        try:
+            user = User.objects.get(id=refresh['user_id'])
+        except User.DoesNotExist:
+            return Response({
+                'code': 'invalid_refresh_token',
+                'message': _('Invalid or expired refresh token.'),
+            }, status=status.HTTP_401_UNAUTHORIZED)
+
+        try:
+            if not _sync_email_verification_from_firebase(user):
+                return _email_not_verified_response()
+        except Exception:
+            logger.error('Firebase verification lookup failed during token refresh')
+            return Response(
+                {'code': 'firebase_verification_unavailable', 'message': _('Unable to refresh the session right now.')},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Get new tokens only after Firebase verification has been confirmed.
         new_access_token = str(refresh.access_token)
         new_refresh_token = str(refresh)  # Rotates the refresh token
         
@@ -525,13 +589,13 @@ def logout_view(request):
         if fcm_token:
             request.user.remove_fcm_token(fcm_token)
 
-        logger.info(f"User logged out: {request.user.email}")
+        logger.info('User logged out')
         
         return Response(status=status.HTTP_204_NO_CONTENT)
         
-    except Exception as e:
+    except Exception:
         # Even if token blacklisting fails, consider logout successful
-        logger.warning(f"Logout error: {str(e)}")
+        logger.warning('Logout cleanup failed')
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -556,7 +620,7 @@ class RegisterFCMTokenView(generics.GenericAPIView):
 
         user.add_fcm_token(fcm_token, device_id, platform)
 
-        logger.info(f"FCM token registered for user: {user.email}")
+        logger.info('FCM token registered')
 
         return Response({
             'message': _('FCM token registered successfully.')
@@ -576,7 +640,7 @@ class RegisterFCMTokenView(generics.GenericAPIView):
 
         request.user.remove_fcm_token(fcm_token)
 
-        logger.info(f"FCM token removed for user: {request.user.email}")
+        logger.info('FCM token removed')
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 

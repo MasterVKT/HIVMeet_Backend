@@ -17,6 +17,7 @@ from hivmeet_backend.asgi import application
 from matching.models import Match
 from messaging.models import Message
 from messaging.services import MessageService
+from profiles.test_support import grant_social_access
 
 
 @override_settings(
@@ -55,6 +56,7 @@ class WebSocketMessagingTests(TransactionTestCase):
         )
 
         self.match = Match.objects.create(user1=self.user1, user2=self.user2, status=Match.ACTIVE)
+        grant_social_access(self.user1, self.user2, self.user3)
 
     def _access_token(self, user: User) -> str:
         return str(RefreshToken.for_user(user).access_token)

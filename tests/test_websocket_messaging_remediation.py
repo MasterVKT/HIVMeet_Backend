@@ -7,12 +7,14 @@ from asgiref.sync import async_to_sync
 from channels.db import database_sync_to_async
 from channels.testing import WebsocketCommunicator
 from django.test import TransactionTestCase, override_settings
+from django.urls import reverse
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from authentication.models import User
 from hivmeet_backend.asgi import application
 from matching.models import Match
 from messaging.models import Message
+from profiles.test_support import grant_social_access
 
 
 @override_settings(
@@ -39,8 +41,9 @@ class WebSocketMediaRemediationTests(TransactionTestCase):
             user2=self.recipient,
             status=Match.ACTIVE,
         )
+        grant_social_access(self.sender, self.recipient)
 
-    def test_message_created_preserves_all_persisted_media_fields(self):
+    def test_message_created_exposes_only_the_protected_media_route(self):
         async def scenario():
             token = str(RefreshToken.for_user(self.recipient).access_token)
             communicator = WebsocketCommunicator(
@@ -59,6 +62,8 @@ class WebSocketMediaRemediationTests(TransactionTestCase):
                     message_type=Message.IMAGE,
                     media_url='https://media.example.test/messages/image.jpg',
                     media_thumbnail_url='https://media.example.test/messages/image-thumb.jpg',
+                    media_file_path='messages/websocket-media-image.jpg',
+                    media_file_name='websocket-media-image.jpg',
                     client_message_id='websocket-media-client-id',
                 )
 
@@ -70,9 +75,18 @@ class WebSocketMediaRemediationTests(TransactionTestCase):
                     break
             self.assertIsNotNone(event)
             self.assertEqual(event['message_id'], str(message.id))
-            self.assertEqual(event['media_url'], message.media_url)
+            protected_url = reverse(
+                'api:messaging:download-message-media',
+                kwargs={
+                    'conversation_id': self.match.id,
+                    'message_id': message.id,
+                },
+            )
+            self.assertEqual(event['media_url'], protected_url)
             self.assertEqual(event['media_type'], Message.IMAGE)
-            self.assertEqual(event['media_thumbnail_url'], message.media_thumbnail_url)
+            self.assertEqual(event['media_thumbnail_url'], None)
+            self.assertNotIn(message.media_url, event.values())
+            self.assertNotIn(message.media_thumbnail_url, event.values())
             await communicator.disconnect()
 
         async_to_sync(scenario)()

@@ -407,10 +407,12 @@ class UserNotificationConsumer(AsyncWebsocketConsumer):
                 access_token = AccessToken(token)
                 user_id = access_token['user_id']
                 self.user = await database_sync_to_async(User.objects.get)(id=user_id)
-            except (InvalidToken, TokenError) as exc:
-                logger.warning(f"WS notifications: token JWT invalide — {exc}")
+                if not self.user.email_verified:
+                    self.user = None
+            except (InvalidToken, TokenError):
+                logger.warning('WS notifications: invalid JWT refused')
             except User.DoesNotExist:
-                logger.warning(f"WS notifications: user {user_id} introuvable")
+                logger.warning('WS notifications: unknown account refused')
 
-        except Exception as exc:
-            logger.error(f"WS notifications: erreur d'authentification — {exc}")
+        except Exception:
+            logger.exception('WS notifications: authentication failed')

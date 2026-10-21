@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: HIVMeet KYC API
-  version: 1.0.0-draft.2
+  version: 1.0.0-draft.3
   description: >-
     Canonical KYC v1 working draft through phase 2. Production activation
     requires the written legal gate defined in KYC_PHASE_0_GOVERNANCE.md.
@@ -114,6 +114,53 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+  /user-profiles/me/verification/upload-intents/{upload_id}/file/:
+    post:
+      summary: Upload one development-local KYC file through the authenticated backend
+      operationId: uploadKycMultipartFile
+      description: >-
+        Available only when the server uses its local development/test private
+        storage. The multipart bytes must exactly match the size and SHA-256
+        declared by the server-owned upload intent. No path, object key,
+        storage URL or file content is returned.
+      parameters:
+        - name: upload_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              additionalProperties: false
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: Technical validation is processing or was idempotently replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycUploadCompleteResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /user-profiles/media/photos/{photo_id}/{variant}/:
     get:
       summary: Read a private profile photo through the authenticated API
@@ -186,8 +233,14 @@ paths:
     post:
       summary: Record an assigned human KYC decision
       operationId: decideKycCase
-      description: Requires future reviewer/supervisor role, MFA, assignment, and immutable audit.
+      description: Internal-only route. Requires an assigned reviewer/supervisor scope, fresh MFA assertion, and append-only audit. No internal comment is ever returned. A successful new decision creates one internal neutral-email delivery record after commit; the public decision response never reports email delivery.
       parameters:
+        - name: X-KYC-MFA-Assertion
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Opaque reviewer MFA assertion valid for five minutes. Never log or persist it.
         - name: case_id
           in: path
           required: true
@@ -233,6 +286,10 @@ components:
     KycDocumentState:
       type: string
       enum: [missing, intent_issued, uploaded, processing, accepted, rejected]
+      description: >-
+        `rejected` is a generic terminal technical result. It never includes a
+        storage key, signed URL, document content, or technical rejection
+        reason.
     KycSafeDocumentState:
       type: object
       required: [type, state]
@@ -367,11 +424,18 @@ components:
               maximum: 5242880
     KycUploadIntentResponse:
       type: object
-      required: [upload_id, upload_url, required_headers, expires_at]
+      required: [upload_id, upload_transport, expires_at, idempotent_replay]
       properties:
         upload_id:
           type: string
           format: uuid
+        upload_transport:
+          type: string
+          enum: [direct_put, backend_multipart]
+          description: >-
+            direct_put uses the short-lived private GCS URL. backend_multipart
+            is development/test-only and sends the file to the authenticated
+            API route; it never includes a storage URL.
         upload_url:
           type: string
           format: uri
@@ -398,6 +462,17 @@ components:
           type: boolean
           description: True only when the same accepted idempotency request is replayed.
       additionalProperties: false
+      oneOf:
+        - title: Direct private object-store PUT
+          required: [upload_transport, upload_url, required_headers]
+          properties:
+            upload_transport:
+              enum: [direct_put]
+        - title: Authenticated development multipart upload
+          required: [upload_transport]
+          properties:
+            upload_transport:
+              enum: [backend_multipart]
     KycUploadCompleteRequest:
       type: object
       required: [upload_id]

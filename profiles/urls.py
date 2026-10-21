@@ -54,6 +54,11 @@ urlpatterns = [
         name='kyc-upload-intents',
     ),
     path(
+        'me/verification/upload-intents/<uuid:upload_id>/file/',
+        views.upload_kyc_multipart_file_view,
+        name='kyc-upload-multipart-file',
+    ),
+    path(
         'me/verification/upload-intents/complete/',
         views.complete_kyc_upload_view,
         name='kyc-upload-complete',

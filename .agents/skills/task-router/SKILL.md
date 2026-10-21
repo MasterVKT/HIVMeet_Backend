@@ -47,6 +47,11 @@ All skills are at `.agents/skills/<name>/SKILL.md` in this repository.
 | Refactor safely, rename, restructure, dead code, safe code evolution | `refactor-safely` | Medium |
 | Review changes, diff, PR review, change impact, code quality gate | `review-changes` | Medium |
 | Agent governance, skills, adapters, hooks, lifecycle, activation, cross-root map | `hivmeet-governance` | High |
+| Back-office / administration web (app `backoffice/`), modération, revue KYC staff, phase back-office | `backoffice-development` | High |
+| Back-office : accès staff, MFA, audit, données de santé exposées au staff | `backoffice-security` | High |
+| Back-office : écrire ou lancer des tests | `backoffice-testing` | Medium |
+| Back-office : garantir qu'aucune modification n'impacte l'application existante | `backoffice-independence-guard` | High |
+| Back-office : fin de phase, rapport HANDOFF, reprise par un autre agent | `backoffice-phase-handoff` | High |
 
 ---
 
@@ -70,6 +75,8 @@ Load at most 2 skills. Secondary only when the task genuinely crosses two domain
 | Release branch preparation | `release-readiness` | `regression-guard` |
 | Post-fix test selection | `bug-fixing` | `test-impact-selection` |
 | Agent governance installation or audit | `hivmeet-governance` | `hivmeet-backend-completion-audit` |
+| Module du back-office (toute phase) | `backoffice-development` | `backoffice-security` |
+| Tests ou clôture d'une phase du back-office | `backoffice-testing` | `backoffice-phase-handoff` |
 
 ---
 
@@ -122,3 +129,8 @@ Load at most 2 skills. Secondary only when the task genuinely crosses two domain
 | `hivmeet-governance` | Maintain maps, adapters, hooks and deterministic lifecycle checks |
 | `hivmeet-backend-orchestrator` | Route Django work and identify frontend dependencies |
 | `hivmeet-backend-completion-audit` | Audit contracts, security, migrations, privacy and evidence |
+| `backoffice-independence-guard` | Interdire tout impact du back-office sur l'application existante |
+| `backoffice-development` | Constitution et recette de module du back-office isolé |
+| `backoffice-security` | MFA, capacités, audit et minimisation des données de santé staff |
+| `backoffice-testing` | Tests du back-office, matrice de permissions, non-régression |
+| `backoffice-phase-handoff` | Clôturer une phase, mettre à jour le HANDOFF, s'arrêter |

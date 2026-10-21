@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 from matching.models import Match
 from messaging.presence import PresenceService
 from messaging.services import _recipient_has_active_client
+from profiles.test_support import grant_social_access
 
 
 User = get_user_model()
@@ -28,6 +29,7 @@ class PresenceServiceContractTests(TestCase):
             birth_date=timezone.localdate() - timedelta(days=31 * 365),
         )
         self.match = Match.objects.create(user1=self.subject, user2=self.viewer)
+        grant_social_access(self.viewer, self.subject)
         self.client = APIClient()
         self.client.force_authenticate(self.viewer)
         self.subject.profile.show_online_status = True

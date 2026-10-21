@@ -1,12 +1,15 @@
 from datetime import date, timedelta
 from importlib import import_module
 from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.test.utils import override_settings
 from django.utils import timezone
@@ -14,7 +17,11 @@ from PIL import Image
 from rest_framework import status
 from rest_framework.test import APIClient, APIRequestFactory
 
-from profiles.kyc import KYC_UPLOAD_INTENT_TTL, start_or_resume_kyc_attempt
+from profiles.kyc import (
+    KYC_UPLOAD_INTENT_TTL,
+    serialize_safe_kyc_status,
+    start_or_resume_kyc_attempt,
+)
 from profiles.models import (
     AccountDeletionRequest,
     DataExportRequest,
@@ -78,6 +85,25 @@ class KycPhase2StorageTests(TestCase):
     def test_upload_intent_default_ttl_matches_the_canonical_plan(self):
         self.assertEqual(KYC_UPLOAD_INTENT_TTL, timedelta(minutes=30))
 
+    def test_safe_status_reports_a_quarantined_document_as_generic_rejected(self):
+        document = KycDocument.objects.create(
+            attempt=self.attempt,
+            document_type=KycDocument.IDENTITY_DOCUMENT,
+            opaque_storage_key=private_object_storage.new_key('kyc'),
+            scan_status=KycDocument.QUARANTINED,
+            quarantine_reason_code='technical_validation_failed',
+        )
+
+        safe_status = serialize_safe_kyc_status(user=self.user)
+        safe_document = next(
+            item
+            for item in safe_status['documents']
+            if item['type'] == document.document_type
+        )
+
+        self.assertEqual(safe_document['state'], 'rejected')
+        self.assertNotIn('technical_validation_failed', str(safe_status))
+
     @staticmethod
     def _jpeg_bytes():
         image = Image.new('RGB', (24, 24), color='purple')
@@ -139,10 +165,80 @@ class KycPhase2StorageTests(TestCase):
         self.assertEqual(replay['Cache-Control'], 'no-store, max-age=0')
         self.assertEqual(replay.data['upload_id'], response.data['upload_id'])
 
+    def test_local_multipart_upload_stores_private_bytes_and_queues_scan(self):
+        """A development device uses the authenticated API, never a bucket URL."""
+        import hashlib
+
+        image_bytes = self._jpeg_bytes()
+        with TemporaryDirectory() as local_root, override_settings(
+            KYC_STORAGE_BACKEND='local',
+            PRIVATE_STORAGE_LOCAL_ROOT=local_root,
+        ):
+            issued = self._issue(sha256=hashlib.sha256(image_bytes).hexdigest())
+            self.assertEqual(issued.status_code, status.HTTP_201_CREATED)
+            self.assertEqual(issued.data['upload_transport'], 'backend_multipart')
+            self.assertNotIn('upload_url', issued.data)
+            self.assertNotIn('required_headers', issued.data)
+
+            uploaded = self.client.post(
+                f"/api/v1/user-profiles/me/verification/upload-intents/{issued.data['upload_id']}/file/",
+                {'file': SimpleUploadedFile('synthetic.jpg', image_bytes, 'image/jpeg')},
+                format='multipart',
+            )
+            self.assertEqual(uploaded.status_code, status.HTTP_202_ACCEPTED)
+            self.assertEqual(uploaded['Cache-Control'], 'no-store, max-age=0')
+            self.assertNotIn('upload_url', uploaded.data)
+            self.assertNotIn('opaque_storage_key', uploaded.data)
+
+            intent = KycUploadIntent.objects.get(id=issued.data['upload_id'])
+            self.assertEqual(verify_kyc_upload.run(str(intent.id)), 'accepted')
+            intent.refresh_from_db()
+            document = intent.document
+            document.refresh_from_db()
+            self.assertEqual(intent.status, KycUploadIntent.CONSUMED)
+            self.assertEqual(document.scan_status, KycDocument.ACCEPTED)
+            self.assertEqual(
+                private_object_storage.download(
+                    scope='kyc', key=intent.opaque_object_key,
+                ),
+                image_bytes,
+            )
+            self.assertFalse((Path(local_root) / 'media').exists())
+
+    def test_local_multipart_upload_rejects_bytes_that_do_not_match_intent(self):
+        import hashlib
+
+        image_bytes = self._jpeg_bytes()
+        with TemporaryDirectory() as local_root, override_settings(
+            KYC_STORAGE_BACKEND='local',
+            PRIVATE_STORAGE_LOCAL_ROOT=local_root,
+        ):
+            issued = self._issue(sha256=hashlib.sha256(image_bytes).hexdigest())
+            response = self.client.post(
+                f"/api/v1/user-profiles/me/verification/upload-intents/{issued.data['upload_id']}/file/",
+                {
+                    'file': SimpleUploadedFile(
+                        'synthetic.jpg', image_bytes + b'altered', 'image/jpeg',
+                    ),
+                },
+                format='multipart',
+            )
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertEqual(response.data['error'], 'invalid_upload_file')
+            self.assertEqual(list(Path(local_root).rglob('*')), [])
+
+    @override_settings(KYC_STORAGE_BACKEND='local', PRIVATE_STORAGE_LOCAL_ROOT='')
+    def test_local_storage_rejects_a_missing_or_public_root(self):
+        self.assertEqual(
+            private_storage_configuration_errors('kyc'),
+            ['local_root_invalid'],
+        )
+
     @override_settings(
         KYC_STORAGE_BACKEND='gcs',
         KYC_STORAGE_BUCKET='kyc-private-test',
         KYC_STORAGE_KMS_KEY='projects/test/keys/kyc',
+        KYC_STORAGE_CORS_ORIGINS=('https://app.example.test',),
         PROFILE_MEDIA_PRIVATE_BUCKET='profile-private-test',
         PROFILE_MEDIA_KMS_KEY='projects/test/keys/profile',
         PRIVATE_STORAGE_RUNTIME_SERVICE_ACCOUNT='runtime@test.iam.gserviceaccount.com',
@@ -616,6 +712,7 @@ class KycPhase2StorageTests(TestCase):
     @override_settings(
         KYC_STORAGE_BACKEND='gcs',
         PRIVATE_STORAGE_RUNTIME_SERVICE_ACCOUNT='runtime@example.iam.gserviceaccount.com',
+        KYC_STORAGE_CORS_ORIGINS=('https://app.example.test',),
     )
     def test_bucket_gate_requires_public_access_prevention(self):
         bucket = SimpleNamespace(
@@ -644,6 +741,7 @@ class KycPhase2StorageTests(TestCase):
     @override_settings(
         KYC_STORAGE_BACKEND='gcs',
         PRIVATE_STORAGE_RUNTIME_SERVICE_ACCOUNT='runtime@example.iam.gserviceaccount.com',
+        KYC_STORAGE_CORS_ORIGINS=('https://app.example.test',),
     )
     def test_bucket_gate_requires_expected_runtime_object_admin_member(self):
         bucket = SimpleNamespace(
@@ -667,6 +765,7 @@ class KycPhase2StorageTests(TestCase):
     @override_settings(
         KYC_STORAGE_BACKEND='gcs',
         PRIVATE_STORAGE_RUNTIME_SERVICE_ACCOUNT='runtime@example.iam.gserviceaccount.com',
+        KYC_STORAGE_CORS_ORIGINS=('https://app.example.test',),
     )
     def test_bucket_gate_rejects_an_additional_object_access_principal(self):
         bucket = SimpleNamespace(
@@ -717,7 +816,38 @@ class KycPhase2StorageTests(TestCase):
             private_storage_configuration_errors('kyc'),
         )
 
+    @override_settings(
+        KYC_STORAGE_BACKEND='gcs',
+        KYC_STORAGE_BUCKET='kyc-private-test',
+        KYC_STORAGE_KMS_KEY='projects/test/locations/test/keyRings/test/cryptoKeys/test',
+        PROFILE_MEDIA_PRIVATE_BUCKET='profile-private-test',
+        PROFILE_MEDIA_KMS_KEY='projects/test/locations/test/keyRings/test/cryptoKeys/profile',
+        PRIVATE_STORAGE_RUNTIME_SERVICE_ACCOUNT='runtime@test.iam.gserviceaccount.com',
+        KYC_STORAGE_CORS_ORIGINS=(
+            'https://app.example.test/path',
+            'https://user@example.test',
+            'https://app.example.test:invalid',
+        ),
+    )
+    def test_gcs_storage_configuration_rejects_non_origin_cors_values(self):
+        self.assertIn(
+            'cors_origin_invalid',
+            private_storage_configuration_errors('kyc'),
+        )
+
     def test_private_storage_command_accepts_only_the_isolated_memory_backend(self):
+        call_command('verify_private_storage', '--scope', 'all')
+
+    @override_settings(
+        KYC_STORAGE_BACKEND='memory',
+        KYC_STORAGE_BUCKET='',
+        KYC_STORAGE_KMS_KEY='',
+        PROFILE_MEDIA_STORAGE_BACKEND='memory',
+        PROFILE_MEDIA_PRIVATE_BUCKET='',
+        PROFILE_MEDIA_KMS_KEY='',
+    )
+    def test_private_storage_command_accepts_blank_development_memory_identifiers(self):
+        """Development memory storage has no cloud buckets or CMEK resources."""
         call_command('verify_private_storage', '--scope', 'all')
 
     def test_private_storage_rejects_cross_scope_or_non_opaque_keys(self):

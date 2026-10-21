@@ -21,7 +21,11 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         scopes = ['kyc', 'profile'] if options['scope'] == 'all' else [options['scope']]
         failures = []
-        if options['scope'] == 'all':
+        uses_two_cloud_buckets = (
+            settings.KYC_STORAGE_BACKEND == 'gcs'
+            and settings.PROFILE_MEDIA_STORAGE_BACKEND == 'gcs'
+        )
+        if options['scope'] == 'all' and uses_two_cloud_buckets:
             if settings.KYC_STORAGE_BUCKET == settings.PROFILE_MEDIA_PRIVATE_BUCKET:
                 failures.append('scopes:buckets_not_distinct')
             if settings.KYC_STORAGE_KMS_KEY == settings.PROFILE_MEDIA_KMS_KEY:

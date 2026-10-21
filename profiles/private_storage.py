@@ -8,12 +8,14 @@ the memory backend exists only for isolated tests and local development.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import secrets
 import subprocess
 import warnings
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from django.conf import settings
@@ -79,6 +81,24 @@ def _is_local_safe_mode() -> bool:
     return bool(getattr(settings, 'TESTING', False) or settings.DEBUG)
 
 
+def _local_storage_root() -> Path:
+    """Return a validated non-public local root for development evidence."""
+    raw_root = str(getattr(settings, 'PRIVATE_STORAGE_LOCAL_ROOT', '')).strip()
+    if not raw_root:
+        raise PrivateStorageUnavailable()
+    try:
+        root = Path(raw_root).expanduser().resolve()
+        public_roots = [
+            Path(settings.MEDIA_ROOT).resolve(),
+            Path(settings.STATIC_ROOT).resolve(),
+        ]
+        if any(root == public or root.is_relative_to(public) for public in public_roots):
+            raise PrivateStorageUnavailable()
+    except (OSError, TypeError, ValueError):
+        raise PrivateStorageUnavailable() from None
+    return root
+
+
 def _scope_settings(scope: str) -> tuple[str, str, str]:
     if scope == 'kyc':
         return (
@@ -111,11 +131,47 @@ def _require_private_key(scope: str, key: str) -> None:
         raise PrivateObjectIntegrityError()
 
 
+def _is_valid_https_origin(origin: str) -> bool:
+    """Return whether ``origin`` is an exact HTTPS web origin.
+
+    Direct KYC PUT CORS rules must never accept a URL path, credentials or an
+    invalid port.  Browser CORS origins have only a scheme, host and optional
+    port; validating that shape here makes the deploy-time storage gate fail
+    closed before a bucket policy can be applied.
+    """
+    try:
+        parsed = urlparse(origin)
+        # Accessing ``port`` also validates that it is a numeric valid port.
+        port = parsed.port
+    except ValueError:
+        return False
+
+    return (
+        parsed.scheme == 'https'
+        and bool(parsed.hostname)
+        and not parsed.username
+        and not parsed.password
+        and (port is None or 1 <= port <= 65535)
+        and not parsed.path
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
 def private_storage_configuration_errors(scope: str) -> list[str]:
     """Return safe configuration codes without contacting object storage."""
     backend, bucket, kms_key = _scope_settings(scope)
     if backend == 'memory':
         return [] if _is_local_safe_mode() else ['memory_backend_forbidden']
+    if backend == 'local':
+        if not _is_local_safe_mode():
+            return ['local_backend_forbidden']
+        try:
+            _local_storage_root()
+        except PrivateStorageUnavailable:
+            return ['local_root_invalid']
+        return []
     if backend != 'gcs':
         return ['unsupported_backend']
     missing = []
@@ -125,6 +181,13 @@ def private_storage_configuration_errors(scope: str) -> list[str]:
         missing.append('kms_key_missing')
     if not settings.PRIVATE_STORAGE_RUNTIME_SERVICE_ACCOUNT:
         missing.append('runtime_service_account_missing')
+    if scope == 'kyc' and not settings.KYC_STORAGE_CORS_ORIGINS:
+        missing.append('cors_origins_missing')
+    if scope == 'kyc' and any(
+        not _is_valid_https_origin(origin)
+        for origin in settings.KYC_STORAGE_CORS_ORIGINS
+    ):
+        missing.append('cors_origin_invalid')
     if scope == 'profile' and settings.PROFILE_MEDIA_MAX_IMAGE_PIXELS <= 0:
         missing.append('profile_image_limit_invalid')
     if scope == 'profile' and settings.PROFILE_MEDIA_MAX_UPLOAD_BYTES <= 0:
@@ -186,6 +249,40 @@ class PrivateObjectStorage:
         except Exception:  # provider detail must not leave this boundary
             raise PrivateStorageUnavailable() from None
 
+    def _local_paths(self, *, scope: str, key: str) -> tuple[Path, Path]:
+        """Resolve an opaque local object below a non-public development root."""
+        _require_private_key(scope, key)
+        try:
+            root = _local_storage_root()
+            object_path = (root / key).resolve()
+            object_path.relative_to(root)
+        except PrivateStorageUnavailable:
+            raise
+        except (OSError, ValueError, TypeError):
+            raise PrivateObjectIntegrityError() from None
+        return object_path, object_path.with_name(f'{object_path.name}.meta')
+
+    @staticmethod
+    def _write_local_file(path: Path, data: bytes, *, mode: int) -> None:
+        temporary = path.with_name(f'.{path.name}.{secrets.token_hex(8)}.tmp')
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(temporary, 'xb') as output:
+                output.write(data)
+            os.replace(temporary, path)
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                # Windows does not implement POSIX mode bits; the parent remains
+                # outside any Django media/static serving root in every case.
+                pass
+        except OSError:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise PrivateStorageUnavailable() from None
+
     def new_key(self, scope: str) -> str:
         """Return a random key with no account, e-mail or document type segment."""
         try:
@@ -211,6 +308,10 @@ class PrivateObjectStorage:
                 raise PrivateStorageUnavailable()
             # Non-routable URL for hermetic tests only. It is never persisted.
             return f'https://uploads.invalid/{bucket_name}/{key}'
+        if backend == 'local':
+            # Development-local evidence is uploaded through the authenticated
+            # backend multipart endpoint. There is no URL to expose or retain.
+            raise PrivateStorageUnavailable()
         bucket = self._bucket('kyc')
         try:
             return bucket.blob(key).generate_signed_url(
@@ -224,6 +325,28 @@ class PrivateObjectStorage:
         except Exception:
             raise PrivateStorageUnavailable() from None
 
+    def issue_reviewer_read_url(self, *, key: str, expires_at):
+        """Issue a short-lived KYC reviewer GET URL without persisting it."""
+        _require_private_key('kyc', key)
+        backend, _, _ = _scope_settings('kyc')
+        if backend == 'memory':
+            if not _is_local_safe_mode():
+                raise PrivateStorageUnavailable()
+            # The local simulation is read through its separate, restricted
+            # development endpoint.  Do not turn an opaque object key into an
+            # API value merely to manufacture a fake URL.
+            return 'https://review.invalid/development-only'
+        if backend == 'local':
+            # Local reviewer reads use the protected development endpoint.
+            raise PrivateStorageUnavailable()
+        bucket = self._bucket('kyc')
+        try:
+            return bucket.blob(key).generate_signed_url(
+                version='v4', expiration=expires_at, method='GET',
+            )
+        except Exception:
+            raise PrivateStorageUnavailable() from None
+
     def put_bytes(self, *, scope: str, key: str, data: bytes, content_type: str):
         """Write private data without ACL mutation or public URL generation."""
         _require_private_key(scope, key)
@@ -232,6 +355,25 @@ class PrivateObjectStorage:
             if not _is_local_safe_mode():
                 raise PrivateStorageUnavailable()
             _MEMORY_OBJECTS[(bucket_name, key)] = (bytes(data), content_type)
+            return
+        if backend == 'local':
+            if not _is_local_safe_mode():
+                raise PrivateStorageUnavailable()
+            object_path, metadata_path = self._local_paths(scope=scope, key=key)
+            try:
+                self._write_local_file(object_path, bytes(data), mode=0o600)
+                self._write_local_file(
+                    metadata_path,
+                    content_type.encode('ascii'),
+                    mode=0o600,
+                )
+            except PrivateStorageUnavailable:
+                try:
+                    object_path.unlink(missing_ok=True)
+                    metadata_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
             return
         bucket = self._bucket(scope)
         try:
@@ -254,6 +396,20 @@ class PrivateObjectStorage:
             except KeyError:
                 raise PrivateObjectNotFound() from None
             return PrivateObjectMetadata(len(data), content_type)
+        if backend == 'local':
+            if not _is_local_safe_mode():
+                raise PrivateStorageUnavailable()
+            object_path, metadata_path = self._local_paths(scope=scope, key=key)
+            try:
+                size_bytes = object_path.stat().st_size
+                content_type = metadata_path.read_text(encoding='ascii').strip()
+            except FileNotFoundError:
+                raise PrivateObjectNotFound() from None
+            except (OSError, UnicodeDecodeError):
+                raise PrivateStorageUnavailable() from None
+            if not content_type or len(content_type) > 100:
+                raise PrivateObjectIntegrityError()
+            return PrivateObjectMetadata(size_bytes, content_type)
         bucket = self._bucket(scope)
         try:
             blob = bucket.blob(key)
@@ -272,6 +428,16 @@ class PrivateObjectStorage:
                 return _MEMORY_OBJECTS[(bucket_name, key)][0]
             except KeyError:
                 raise PrivateObjectNotFound() from None
+        if backend == 'local':
+            if not _is_local_safe_mode():
+                raise PrivateStorageUnavailable()
+            object_path, _ = self._local_paths(scope=scope, key=key)
+            try:
+                return object_path.read_bytes()
+            except FileNotFoundError:
+                raise PrivateObjectNotFound() from None
+            except OSError:
+                raise PrivateStorageUnavailable() from None
         bucket = self._bucket(scope)
         try:
             return bucket.blob(key).download_as_bytes()
@@ -287,6 +453,16 @@ class PrivateObjectStorage:
         if backend == 'memory':
             _MEMORY_OBJECTS.pop((bucket_name, key), None)
             return (bucket_name, key) not in _MEMORY_OBJECTS
+        if backend == 'local':
+            if not _is_local_safe_mode():
+                raise PrivateStorageUnavailable()
+            object_path, metadata_path = self._local_paths(scope=scope, key=key)
+            try:
+                object_path.unlink(missing_ok=True)
+                metadata_path.unlink(missing_ok=True)
+                return not object_path.exists() and not metadata_path.exists()
+            except OSError:
+                raise PrivateStorageUnavailable() from None
         bucket = self._bucket(scope)
         try:
             blob = bucket.blob(key)
@@ -302,6 +478,8 @@ class PrivateObjectStorage:
         backend, _, expected_kms_key = _scope_settings(scope)
         if backend == 'memory':
             return [] if _is_local_safe_mode() else ['memory_backend_forbidden']
+        if backend == 'local':
+            return [] if _is_local_safe_mode() else ['local_backend_forbidden']
         bucket = self._bucket(scope)
         errors = []
         try:
@@ -318,6 +496,8 @@ class PrivateObjectStorage:
             if scope == 'kyc':
                 if not cors_rules:
                     errors.append('cors_missing')
+                expected_origins = set(settings.KYC_STORAGE_CORS_ORIGINS)
+                configured_origins = set()
                 for rule in cors_rules:
                     methods = {method.upper() for method in rule.get('method', ())}
                     origins = set(rule.get('origin', ()))
@@ -339,9 +519,15 @@ class PrivateObjectStorage:
                     if '*' in origins:
                         errors.append('cors_wildcard_origin')
                         break
+                    if not origins <= expected_origins:
+                        errors.append('cors_unapproved_origin')
+                        break
                     if response_headers - {'content-type', 'x-goog-generation'}:
                         errors.append('cors_excessive_response_header')
                         break
+                    configured_origins.update(origins)
+                if configured_origins != expected_origins:
+                    errors.append('cors_origins_mismatch')
             elif cors_rules:
                 errors.append('cors_direct_read_not_allowed')
             policy = bucket.get_iam_policy(requested_policy_version=3)

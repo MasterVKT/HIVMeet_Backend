@@ -9,8 +9,16 @@ Celery tasks for GDPR-related profile operations.
 
 import json
 import hashlib
+import hmac
 import logging
 import os
+from smtplib import (
+    SMTPAuthenticationError,
+    SMTPException,
+    SMTPRecipientsRefused,
+    SMTPResponseException,
+    SMTPServerDisconnected,
+)
 from datetime import timedelta
 from io import StringIO
 
@@ -18,6 +26,7 @@ from celery import shared_task
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
+from django.core.mail import EmailMultiAlternatives
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.db import transaction
@@ -244,6 +253,271 @@ def _delete_profile_media_for_user(user):
 
     for photo in ProfilePhoto.objects.filter(profile__user=user).iterator():
         profile_photo_storage.delete_photo(photo)
+
+
+KYC_DECISION_EMAIL_SUBJECT = (
+    'HIVMeet - Mise a jour de verification / Verification update'
+)
+KYC_DECISION_EMAIL_BODY = """Bonjour / Hello,
+
+Votre verification a ete mise a jour. Ouvrez HIVMeet pour consulter votre
+acces et les prochaines etapes.
+
+Your verification record has been updated. Open HIVMeet to review your access
+and next steps.
+
+HIVMeet
+"""
+
+
+class KycDecisionEmailTransientError(RuntimeError):
+    """The delivery may succeed if retried later without changing the decision."""
+
+
+class KycDecisionEmailPermanentError(RuntimeError):
+    """The delivery must remain terminal while the KYC decision stays effective."""
+
+
+def _current_verified_kyc_recipient(*, user_id):
+    """Return the current Firebase-verified address without persisting it.
+
+    Firebase is the source of truth for address verification.  A provider
+    outage is retryable; a disabled, missing, changed or unverified address is
+    a safe terminal suppression rather than an email sent to stale contact
+    data.
+    """
+    user = User.objects.filter(id=user_id, is_active=True).only(
+        'id', 'email', 'email_verified', 'firebase_uid',
+    ).first()
+    if user is None or not user.email or not user.email_verified or not user.firebase_uid:
+        return None
+    try:
+        from hivmeet_backend.firebase_service import firebase_service
+
+        firebase_user = firebase_service.get_user(user.firebase_uid)
+    except Exception as exc:
+        raise KycDecisionEmailTransientError() from exc
+
+    firebase_email = str(getattr(firebase_user, 'email', '')).strip().lower()
+    if (
+        getattr(firebase_user, 'disabled', False) is True
+        or
+        getattr(firebase_user, 'email_verified', False) is not True
+        or not firebase_email
+        or firebase_email != user.email.strip().lower()
+    ):
+        return None
+    return user.email
+
+
+def _decision_email_message_id(delivery_id):
+    """Keep a stable opaque identifier across retries for SMTP-side dedupe."""
+    digest = hmac.new(
+        settings.SECRET_KEY.encode('utf-8'),
+        f'kyc-decision-email:v1:{delivery_id}'.encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()
+    return f'<{digest}@hivmeet.invalid>'
+
+
+def _send_kyc_decision_email(*, delivery_id, recipient):
+    message = EmailMultiAlternatives(
+        subject=KYC_DECISION_EMAIL_SUBJECT,
+        body=KYC_DECISION_EMAIL_BODY,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[recipient],
+        headers={'Message-ID': _decision_email_message_id(delivery_id)},
+    )
+    try:
+        sent = message.send(fail_silently=False)
+    except SMTPAuthenticationError as exc:
+        raise KycDecisionEmailPermanentError() from exc
+    except SMTPRecipientsRefused as exc:
+        codes = [details[0] for details in exc.recipients.values() if details]
+        error = (
+            KycDecisionEmailTransientError
+            if any(400 <= code < 500 for code in codes)
+            else KycDecisionEmailPermanentError
+        )
+        raise error() from exc
+    except SMTPResponseException as exc:
+        error = (
+            KycDecisionEmailTransientError
+            if 400 <= exc.smtp_code < 500
+            else KycDecisionEmailPermanentError
+        )
+        raise error() from exc
+    except (SMTPServerDisconnected, SMTPException, OSError, TimeoutError) as exc:
+        raise KycDecisionEmailTransientError() from exc
+    if sent != 1:
+        raise KycDecisionEmailTransientError()
+
+
+def _claim_kyc_decision_email_delivery(*, delivery_id, now):
+    """Claim a due delivery row so parallel workers cannot send twice."""
+    from profiles.models import KycDecisionEmailDelivery
+
+    with transaction.atomic():
+        delivery = (
+            KycDecisionEmailDelivery.objects.select_for_update()
+            .select_related('decision__attempt')
+            .filter(id=delivery_id)
+            .first()
+        )
+        if delivery is None:
+            return None, 'missing'
+        if delivery.status in {
+            KycDecisionEmailDelivery.SENT,
+            KycDecisionEmailDelivery.FAILED,
+            KycDecisionEmailDelivery.SUPPRESSED,
+        }:
+            return None, delivery.status
+        stale_before = now - timedelta(
+            seconds=settings.KYC_DECISION_EMAIL_SENDING_TIMEOUT_SECONDS,
+        )
+        if (
+            delivery.status == KycDecisionEmailDelivery.SENDING
+            and delivery.sending_started_at
+            and delivery.sending_started_at > stale_before
+        ):
+            return None, 'in_progress'
+        if (
+            delivery.status == KycDecisionEmailDelivery.RETRYING
+            and delivery.next_attempt_at
+            and delivery.next_attempt_at > now
+        ):
+            return None, 'scheduled'
+        delivery.status = KycDecisionEmailDelivery.SENDING
+        delivery.attempt_count += 1
+        delivery.last_error_code = ''
+        delivery.next_attempt_at = None
+        delivery.sending_started_at = now
+        delivery.save(update_fields=[
+            'status', 'attempt_count', 'last_error_code', 'next_attempt_at',
+            'sending_started_at', 'updated_at',
+        ])
+        return delivery.decision.attempt.user_id, None
+
+
+def _finish_kyc_decision_email_delivery(*, delivery_id, status, error_code='', now=None):
+    from profiles.models import KycDecisionEmailDelivery
+
+    now = now or timezone.now()
+    with transaction.atomic():
+        delivery = KycDecisionEmailDelivery.objects.select_for_update().filter(id=delivery_id).first()
+        if delivery is None or delivery.status != KycDecisionEmailDelivery.SENDING:
+            return delivery.status if delivery is not None else 'missing'
+        delivery.status = status
+        delivery.last_error_code = error_code
+        delivery.next_attempt_at = None
+        delivery.sending_started_at = None
+        delivery.sent_at = now if status == KycDecisionEmailDelivery.SENT else None
+        delivery.save(update_fields=[
+            'status', 'last_error_code', 'next_attempt_at', 'sending_started_at',
+            'sent_at', 'updated_at',
+        ])
+    return status
+
+
+def _record_kyc_decision_email_retry(*, delivery_id, now):
+    from profiles.models import KycDecisionEmailDelivery
+
+    with transaction.atomic():
+        delivery = KycDecisionEmailDelivery.objects.select_for_update().filter(id=delivery_id).first()
+        if delivery is None or delivery.status != KycDecisionEmailDelivery.SENDING:
+            return None
+        if delivery.attempt_count >= settings.KYC_DECISION_EMAIL_MAX_ATTEMPTS:
+            delivery.status = KycDecisionEmailDelivery.FAILED
+            delivery.last_error_code = 'smtp_delivery_failed'
+            delivery.next_attempt_at = None
+            delay_seconds = None
+        else:
+            delay_seconds = min(
+                settings.KYC_DECISION_EMAIL_RETRY_MAX_SECONDS,
+                settings.KYC_DECISION_EMAIL_RETRY_BASE_SECONDS
+                * (2 ** max(0, delivery.attempt_count - 1)),
+            )
+            delivery.status = KycDecisionEmailDelivery.RETRYING
+            delivery.last_error_code = 'smtp_transient_failure'
+            delivery.next_attempt_at = now + timedelta(seconds=delay_seconds)
+        delivery.sending_started_at = None
+        delivery.save(update_fields=[
+            'status', 'last_error_code', 'next_attempt_at', 'sending_started_at',
+            'updated_at',
+        ])
+    return delay_seconds
+
+
+@shared_task(bind=True, max_retries=4, default_retry_delay=60)
+def send_kyc_decision_email(self, delivery_id: str):
+    """Deliver one neutral bilingual KYC update after a committed decision.
+
+    The task never changes the KYC decision or its access projection.  Its
+    database state is the durable delivery ledger for transient SMTP outages,
+    terminal failures and safe suppression of stale recipient addresses.
+    """
+    now = timezone.now()
+    user_id, skip_status = _claim_kyc_decision_email_delivery(
+        delivery_id=delivery_id,
+        now=now,
+    )
+    if skip_status:
+        return skip_status
+    try:
+        recipient = _current_verified_kyc_recipient(user_id=user_id)
+        if recipient is None:
+            return _finish_kyc_decision_email_delivery(
+                delivery_id=delivery_id,
+                status='suppressed',
+                error_code='recipient_not_verified',
+            )
+        _send_kyc_decision_email(delivery_id=delivery_id, recipient=recipient)
+    except KycDecisionEmailPermanentError:
+        return _finish_kyc_decision_email_delivery(
+            delivery_id=delivery_id,
+            status='failed',
+            error_code='smtp_permanent_failure',
+        )
+    except KycDecisionEmailTransientError as exc:
+        delay_seconds = _record_kyc_decision_email_retry(
+            delivery_id=delivery_id,
+            now=timezone.now(),
+        )
+        if delay_seconds is None:
+            return 'failed'
+        raise self.retry(exc=exc, countdown=delay_seconds)
+
+    return _finish_kyc_decision_email_delivery(
+        delivery_id=delivery_id,
+        status='sent',
+    )
+
+
+@shared_task
+def dispatch_due_kyc_decision_emails(batch_size=100):
+    """Recover due retries and abandoned claims without exposing recipients."""
+    from profiles.models import KycDecisionEmailDelivery
+
+    now = timezone.now()
+    stale_before = now - timedelta(
+        seconds=settings.KYC_DECISION_EMAIL_SENDING_TIMEOUT_SECONDS,
+    )
+    delivery_ids = list(
+        KycDecisionEmailDelivery.objects.filter(
+            Q(status=KycDecisionEmailDelivery.PENDING)
+            | Q(
+                status=KycDecisionEmailDelivery.RETRYING,
+                next_attempt_at__lte=now,
+            )
+            | Q(
+                status=KycDecisionEmailDelivery.SENDING,
+                sending_started_at__lte=stale_before,
+            ),
+        ).values_list('id', flat=True)[:batch_size]
+    )
+    for delivery_id in delivery_ids:
+        send_kyc_decision_email.delay(str(delivery_id))
+    return len(delivery_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -813,3 +1087,115 @@ def migrate_legacy_profile_photos(batch_size=100):
     for photo_id in photo_ids:
         migrate_legacy_profile_photo.delay(str(photo_id))
     return len(photo_ids)
+
+
+@shared_task
+def alert_overdue_kyc_reviews(batch_size=100):
+    """Emit generic internal SLA alerts without KYC evidence or user details."""
+    from django.contrib.auth import get_user_model
+    from notifications.models import Notification
+    from profiles.kyc import _safe_audit_event
+    from profiles.models import KycAttempt
+
+    now = timezone.now()
+    deadline = now - timedelta(hours=settings.KYC_REVIEW_SLA_HOURS)
+    overdue = list(KycAttempt.objects.filter(
+        status=KycAttempt.PENDING_REVIEW,
+        submitted_at__lte=deadline,
+    ).order_by('submitted_at')[:batch_size])
+    if not overdue:
+        return 0
+    since = now - timedelta(hours=settings.KYC_REVIEW_SLA_HOURS)
+    alerted = 0
+    for attempt in overdue:
+        if attempt.audit_events.filter(
+            event_type='review_sla_alerted', created_at__gte=since,
+        ).exists():
+            continue
+        _safe_audit_event(
+            attempt=attempt, actor=None, event_type='review_sla_alerted',
+            metadata={'status': attempt.status}, actor_role='system',
+        )
+        alerted += 1
+    if alerted:
+        User = get_user_model()
+        for supervisor in User.objects.filter(
+            groups__name='kyc_supervisor', is_active=True,
+        ).distinct():
+            Notification.objects.create(
+                user=supervisor, type='system', title=_('KYC review SLA alert'),
+                body=_('One or more KYC cases require review.'),
+                data={'event': 'kyc_review_sla'},
+            )
+    return alerted
+
+
+@shared_task
+def alert_kyc_review_access_anomalies(batch_size=100):
+    """Flag exceptional reviewer-document access volume without evidence data.
+
+    The unique alert row makes overlapping Beat workers idempotent for each
+    actor/category/window.  Notifications deliberately identify only the
+    event category, never a reviewer, account, case, document or URL.
+    """
+    from django.contrib.auth import get_user_model
+    from django.db.models import Count
+    from notifications.models import Notification
+    from profiles.kyc import _safe_audit_event
+    from profiles.models import KycAuditEvent, KycReviewAnomalyAlert
+
+    window_minutes = max(1, settings.KYC_REVIEW_ANOMALY_WINDOW_MINUTES)
+    threshold = max(1, settings.KYC_REVIEW_ANOMALY_ACCESS_THRESHOLD)
+    now = timezone.now()
+    window_seconds = window_minutes * 60
+    window_started_at = now - timedelta(
+        seconds=int(now.timestamp()) % window_seconds,
+        microseconds=now.microsecond,
+    )
+    candidates = list(
+        KycAuditEvent.objects.filter(
+            event_type='review_document_accessed',
+            actor__isnull=False,
+            created_at__gte=window_started_at,
+        ).values('actor_id').annotate(
+            access_count=Count('id'),
+        ).filter(access_count__gte=threshold).order_by('actor_id')[:batch_size]
+    )
+    alerted = 0
+    for candidate in candidates:
+        latest = KycAuditEvent.objects.filter(
+            event_type='review_document_accessed',
+            actor_id=candidate['actor_id'],
+            created_at__gte=window_started_at,
+        ).select_related('attempt', 'actor').order_by('-created_at').first()
+        if latest is None:
+            continue
+        with transaction.atomic():
+            alert_record, created = KycReviewAnomalyAlert.objects.get_or_create(
+                actor_id=candidate['actor_id'],
+                category=KycReviewAnomalyAlert.DOCUMENT_ACCESS_VOLUME,
+                window_started_at=window_started_at,
+            )
+            if not created:
+                continue
+            _safe_audit_event(
+                attempt=latest.attempt,
+                actor=latest.actor,
+                event_type='review_access_anomaly_alerted',
+                metadata={'category': KycReviewAnomalyAlert.DOCUMENT_ACCESS_VOLUME},
+                actor_role='system',
+            )
+            alerted += 1
+    if alerted:
+        User = get_user_model()
+        for supervisor in User.objects.filter(
+            groups__name='kyc_supervisor', is_active=True,
+        ).distinct():
+            Notification.objects.create(
+                user=supervisor,
+                type='system',
+                title=_('KYC review anomaly alert'),
+                body=_('An internal KYC review anomaly requires attention.'),
+                data={'event': 'kyc_review_anomaly'},
+            )
+    return alerted

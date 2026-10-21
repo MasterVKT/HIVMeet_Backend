@@ -308,12 +308,14 @@ class DeliveryReceiptWebSocketTests(TransactionTestCase):
             password='TestPass123!',
             display_name='Delivery Sender',
             birth_date=date(1990, 1, 1),
+            email_verified=True,
         )
         self.recipient = User.objects.create_user(
             email='delivery-recipient@example.com',
             password='TestPass123!',
             display_name='Delivery Recipient',
             birth_date=date(1991, 1, 1),
+            email_verified=True,
         )
         self.match = Match.objects.create(
             user1=self.sender, user2=self.recipient, status=Match.ACTIVE
@@ -396,6 +398,33 @@ class DeliveryReceiptWebSocketTests(TransactionTestCase):
             return connected
 
         self.assertFalse(async_to_sync(scenario)())
+
+    def test_social_sockets_refuse_an_old_jwt_when_email_is_not_verified(self):
+        self.recipient.email_verified = False
+        self.recipient.save(update_fields=['email_verified', 'updated_at'])
+
+        async def scenario():
+            notifications = WebsocketCommunicator(
+                UserNotificationConsumer.as_asgi(),
+                f"/ws/notifications/?token={self._token(self.recipient)}",
+            )
+            notification_connected, _ = await notifications.connect()
+            await notifications.disconnect()
+
+            conversation = WebsocketCommunicator(
+                ConversationConsumer.as_asgi(),
+                f"/ws/conversations/{self.match.id}/?token={self._token(self.recipient)}",
+            )
+            conversation.scope['url_route'] = {
+                'kwargs': {'conversation_id': str(self.match.id)}
+            }
+            conversation_connected, _ = await conversation.connect()
+            await conversation.disconnect()
+            return notification_connected, conversation_connected
+
+        notification_connected, conversation_connected = async_to_sync(scenario)()
+        self.assertFalse(notification_connected)
+        self.assertFalse(conversation_connected)
 
     def test_sender_receives_delivery_receipt_on_personal_group(self):
         """The author's ticks must flip without the chat being open."""

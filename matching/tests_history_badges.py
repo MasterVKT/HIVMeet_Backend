@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from matching.models import InteractionHistory, Match
+from matching.test_support import grant_social_access
 
 
 User = get_user_model()
@@ -20,7 +21,7 @@ class HistoryAndBadgeContractTests(APITestCase):
         self.client.force_authenticate(self.owner)
 
     def _user(self, slug, display_name):
-        return User.objects.create_user(
+        user = User.objects.create_user(
             email=f'{slug}@example.test',
             password='testpass123',
             display_name=display_name,
@@ -28,6 +29,8 @@ class HistoryAndBadgeContractTests(APITestCase):
             email_verified=True,
             is_active=True,
         )
+        grant_social_access(user)
+        return user
 
     def _interaction(self, target, interaction_type=InteractionHistory.LIKE):
         return InteractionHistory.objects.create(

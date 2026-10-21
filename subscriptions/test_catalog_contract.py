@@ -12,6 +12,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from profiles.test_support import grant_social_access
 from .models import PaymentTransaction, SubscriptionPlan
 from .payment_gateway import MyCoolPayError
 from .pricing import convert_amount
@@ -75,6 +76,7 @@ class SubscriptionCatalogContractTest(TestCase):
         )
         self.user.profile.country = 'Cameroun'
         self.user.profile.save(update_fields=['country'])
+        grant_social_access(self.user)
         create_plan(
             'hivmeet_monthly',
             SubscriptionPlan.INTERVAL_MONTH,
@@ -185,6 +187,7 @@ class PurchaseIdempotencyContractTest(TestCase):
             display_name='Idempotence',
             birth_date=date(1990, 1, 1),
         )
+        grant_social_access(self.user)
         create_plan(
             'hivmeet_monthly',
             SubscriptionPlan.INTERVAL_MONTH,

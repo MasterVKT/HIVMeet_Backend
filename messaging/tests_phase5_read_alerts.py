@@ -14,6 +14,7 @@ from messaging.models import Message
 from messaging.services import MessageService
 from messaging.tasks import send_read_notification
 from notifications.models import Notification
+from profiles.test_support import grant_social_access
 from subscriptions.utils import invalidate_premium_status_cache
 
 
@@ -39,6 +40,7 @@ class PersistedReadAlertTests(TestCase):
             user2=self.reader,
             status=Match.ACTIVE,
         )
+        grant_social_access(self.author, self.reader)
 
     def _make_author_premium(self, preference=None):
         self.author.is_premium = True

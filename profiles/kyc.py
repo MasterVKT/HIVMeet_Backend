@@ -17,7 +17,13 @@ from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.permissions import BasePermission
 
 from .models import KycAttempt, KycAuditEvent, KycDocument, KycUploadIntent
-from .private_storage import private_object_storage, private_storage_configuration_errors
+from .private_storage import (
+    PrivateObjectIntegrityError,
+    PrivateStorageUnavailable,
+    canonical_mime_type,
+    private_object_storage,
+    private_storage_configuration_errors,
+)
 
 
 KYC_CHALLENGE_TTL = timedelta(minutes=30)
@@ -60,6 +66,14 @@ class KycStorageUnavailable(APIException):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     default_detail = _('Secure KYC storage is not available yet.')
     default_code = 'dependency_unavailable'
+
+
+class KycUploadFileInvalid(APIException):
+    """Reject a multipart body that differs from its server-owned intent."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+    default_detail = _('The selected KYC file cannot be accepted.')
+    default_code = 'invalid_upload_file'
 
 
 class KycLegacyEndpointDeprecated(APIException):
@@ -140,7 +154,7 @@ def _audit_idempotency_fingerprint(idempotency_key):
     return f'v1:{digest[:32]}'
 
 
-def _safe_audit_event(*, attempt, actor, event_type, metadata=None):
+def _safe_audit_event(*, attempt, actor, event_type, metadata=None, actor_role=None):
     """Persist only whitelisted technical metadata."""
     safe_metadata = {}
     for key, value in (metadata or {}).items():
@@ -165,7 +179,10 @@ def _safe_audit_event(*, attempt, actor, event_type, metadata=None):
     KycAuditEvent.objects.create(
         attempt=attempt,
         actor=actor,
-        actor_role=getattr(actor, 'role', '') if actor else '',
+        actor_role=(
+            actor_role if actor_role is not None
+            else (getattr(actor, 'role', '') if actor else '')
+        ),
         event_type=event_type,
         metadata=safe_metadata,
     )
@@ -355,7 +372,11 @@ def serialize_safe_kyc_status(*, user, now=None):
         KycDocument.ISSUED: 'intent_issued',
         KycDocument.UPLOADED: 'uploaded',
         KycDocument.SCANNING: 'processing',
-        KycDocument.QUARANTINED: 'processing',
+        # A quarantined object has reached a terminal *technical* outcome.  Do
+        # not leave the applicant indefinitely waiting for a worker that has
+        # already rejected the upload.  The public state deliberately omits
+        # the quarantine reason, object key and any document detail.
+        KycDocument.QUARANTINED: 'rejected',
         KycDocument.ACCEPTED: 'accepted',
         KycDocument.PURGED: 'missing',
     }
@@ -518,7 +539,15 @@ def issue_kyc_upload_intent(*, user, values, now=None):
 
 
 def serialize_kyc_upload_intent(intent, *, replay=False):
-    """Return a transient PUT URL without retaining it in a database or audit log."""
+    """Return the permitted upload transport without retaining file data."""
+    if settings.KYC_STORAGE_BACKEND == 'local':
+        return {
+            'upload_id': str(intent.id),
+            'expires_at': intent.expires_at,
+            'upload_transport': 'backend_multipart',
+            'idempotent_replay': replay,
+        }
+
     upload_url = private_object_storage.issue_upload_url(
         key=intent.opaque_object_key,
         content_type=intent.declared_mime_type,
@@ -533,6 +562,7 @@ def serialize_kyc_upload_intent(intent, *, replay=False):
             'Content-Length': str(intent.declared_size_bytes),
         },
         'upload_url': upload_url,
+        'upload_transport': 'direct_put',
         'idempotent_replay': replay,
     }
 
@@ -574,6 +604,73 @@ def mark_kyc_upload_complete(*, user, upload_id, now=None):
             metadata={'document_type': intent.document_type, 'status': document.scan_status},
         )
     return intent, replay
+
+
+@transaction.atomic
+def store_kyc_multipart_upload(*, user, upload_id, uploaded_file, now=None):
+    """Store one development-local file through the authenticated API.
+
+    The method binds the multipart bytes to the previously server-owned upload
+    intent before writing.  It deliberately returns only an opaque upload id;
+    paths, keys and bytes never cross the API boundary.
+    """
+    now = now or timezone.now()
+    if settings.KYC_STORAGE_BACKEND != 'local':
+        raise KycStorageUnavailable()
+    intent = (
+        KycUploadIntent.objects.select_for_update()
+        .select_related('attempt')
+        .filter(id=upload_id, attempt__user=user, attempt__is_open=True)
+        .first()
+    )
+    if intent is None or intent.document_id is None:
+        raise KycStateConflict()
+    if intent.status == KycUploadIntent.CONSUMED or intent.upload_confirmed_at:
+        return intent, True
+    if intent.status != KycUploadIntent.ISSUED or intent.expires_at <= now:
+        raise KycUploadIntentExpired()
+
+    expected_size = intent.declared_size_bytes
+    if getattr(uploaded_file, 'size', None) != expected_size:
+        raise KycUploadFileInvalid()
+    try:
+        declared_mime_type = canonical_mime_type(intent.declared_mime_type)
+    except PrivateObjectIntegrityError:
+        raise KycUploadFileInvalid() from None
+
+    body = bytearray()
+    for chunk in uploaded_file.chunks():
+        body.extend(chunk)
+        if len(body) > expected_size:
+            raise KycUploadFileInvalid()
+    data = bytes(body)
+    if (
+        len(data) != expected_size
+        or hashlib.sha256(data).hexdigest() != intent.declared_sha256.lower()
+    ):
+        raise KycUploadFileInvalid()
+
+    try:
+        private_object_storage.put_bytes(
+            scope='kyc',
+            key=intent.opaque_object_key,
+            data=data,
+            content_type=declared_mime_type,
+        )
+        completed_intent, replay = mark_kyc_upload_complete(
+            user=user,
+            upload_id=upload_id,
+            now=now,
+        )
+    except PrivateStorageUnavailable:
+        raise KycStorageUnavailable() from None
+    except Exception:
+        try:
+            private_object_storage.delete(scope='kyc', key=intent.opaque_object_key)
+        except PrivateStorageUnavailable:
+            pass
+        raise
+    return completed_intent, replay
 
 
 def _has_matching_consumed_upload_intents(*, attempt, upload_ids):

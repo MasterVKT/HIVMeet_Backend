@@ -14,6 +14,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from subscriptions.utils import invalidate_premium_status_cache
+from profiles.test_support import grant_social_access
 
 
 User = get_user_model()
@@ -29,6 +30,7 @@ class ReadAlertPreferenceTests(TestCase):
         )
         self.client = APIClient()
         self.client.force_authenticate(self.user)
+        grant_social_access(self.user)
         self.url = '/api/v1/user-settings/notification-preferences'
 
     def _activate_premium(self):

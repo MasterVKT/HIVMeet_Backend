@@ -1,0 +1,11 @@
+{% extends "backoffice/base.html" %}
+{% load i18n %}
+{% block content %}
+<section class="card">
+  <h1>{% trans "Home" %}</h1>
+  <p>{% blocktrans with name=user.display_name %}Signed in as {{ name }}.{% endblocktrans %}</p>
+  <h2>{% trans "Your roles" %}</h2>
+  <ul>{% for group in groups %}<li>{{ group }}</li>{% endfor %}</ul>
+  <p class="hint">{% trans "Modules are enabled progressively according to your roles." %}</p>
+</section>
+{% endblock %}

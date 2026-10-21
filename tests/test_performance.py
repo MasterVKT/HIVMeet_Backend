@@ -12,6 +12,7 @@ from django.test.utils import override_settings
 from rest_framework.test import APIClient
 from tests.base import UserFactory, ProfileFactory
 from profiles.models import Profile
+from profiles.test_support import grant_social_access
 from matching.models import Like, Match
 import statistics
 
@@ -134,6 +135,7 @@ class APILoadTest(TransactionTestCase):
         for i in range(50):
             user = UserFactory(email=f'user{i}@test.com')
             ProfileFactory(user=user)
+            grant_social_access(user)
             
             client = APIClient()
             client.force_authenticate(user=user)

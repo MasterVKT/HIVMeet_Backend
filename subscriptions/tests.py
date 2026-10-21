@@ -26,6 +26,7 @@ from .services import (
     PlanChangeRequiresPaymentError,
 )
 from .utils import is_premium_user
+from profiles.test_support import grant_social_access
 
 User = get_user_model()
 
@@ -158,6 +159,7 @@ class SubscriptionAPITest(APITestCase):
         )
         
         self.client.force_authenticate(user=self.user)
+        grant_social_access(self.user)
     
     def test_get_plans(self):
         """Test getting subscription plans.
@@ -347,6 +349,7 @@ class PremiumFeatureServiceTest(TestCase):
             current_period_start=timezone.now(),
             current_period_end=timezone.now() + timedelta(days=30)
         )
+        grant_social_access(self.user)
     
     def test_check_premium_status(self):
         """Test checking premium status."""
@@ -398,6 +401,7 @@ class PremiumStatusCacheInvalidationTest(TestCase):
             price=Decimal('9.99'),
             billing_interval=SubscriptionPlan.INTERVAL_MONTH
         )
+        grant_social_access(self.user)
 
     def tearDown(self):
         cache.clear()
@@ -537,6 +541,7 @@ class ModifySubscriptionAPITest(APITestCase):
             super_likes_remaining=5,
         )
         self.client.force_authenticate(user=self.user)
+        grant_social_access(self.user)
 
     def tearDown(self):
         cache.clear()
@@ -838,6 +843,7 @@ class ModifySubscriptionServiceTest(TestCase):
             current_period_start=timezone.now() - timedelta(days=15),
             current_period_end=timezone.now() + timedelta(days=15),
         )
+        grant_social_access(self.user)
         self.service = SubscriptionService()
 
     def tearDown(self):

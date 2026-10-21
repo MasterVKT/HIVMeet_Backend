@@ -1,0 +1,10 @@
+{% extends "backoffice/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Second verification step" %} — {% trans "HIVMeet back-office" %}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>{% trans "Second verification step" %}</h1>
+  <p class="error" role="alert">{% trans "The second verification step is not available yet. Access is refused." %}</p>
+  <p><a href="{% url 'backoffice:login' %}">{% trans "Back to sign in" %}</a></p>
+</section>
+{% endblock %}

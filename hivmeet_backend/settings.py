@@ -48,13 +48,6 @@ validate_kyc_runtime_gate(
 # Production readiness gate: an empty city catalogue would make manual location unusable.
 GEONAMES_CATALOG_REQUIRED = config('GEONAMES_CATALOG_REQUIRED', default=not DEBUG, cast=bool)
 
-# Secure default.  A controlled rollout can temporarily set this to False
-# while the registration client is being distributed, then must turn it back
-# on to reject Firebase-only account creation.
-HIVMEET_REQUIRE_EXPLICIT_REGISTRATION = config(
-    'HIVMEET_REQUIRE_EXPLICIT_REGISTRATION', default=True, cast=bool,
-)
-
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,10.0.2.2,0.0.0.0,192.168.1.118,*', cast=Csv())
 
 # Application definition
@@ -211,10 +204,23 @@ PROFILE_PHOTO_STORAGE = config(
 # the repository.  There is deliberately no production fallback to local or a
 # public Firebase bucket.
 KYC_STORAGE_BACKEND = config(
-    'KYC_STORAGE_BACKEND', default='memory' if DEBUG else 'gcs',
+    'KYC_STORAGE_BACKEND', default='local' if DEBUG else 'gcs',
 ).strip().lower()
+_private_storage_local_root = Path(
+    config('PRIVATE_STORAGE_LOCAL_ROOT', default='private_uploads').strip(),
+).expanduser()
+PRIVATE_STORAGE_LOCAL_ROOT = str(
+    _private_storage_local_root
+    if _private_storage_local_root.is_absolute()
+    else BASE_DIR / _private_storage_local_root
+)
 KYC_STORAGE_BUCKET = config('KYC_STORAGE_BUCKET', default='').strip()
 KYC_STORAGE_KMS_KEY = config('KYC_STORAGE_KMS_KEY', default='').strip()
+KYC_STORAGE_CORS_ORIGINS = tuple(
+    origin.strip().rstrip('/')
+    for origin in config('KYC_STORAGE_CORS_ORIGINS', default='', cast=Csv())
+    if origin.strip()
+)
 PRIVATE_STORAGE_RUNTIME_SERVICE_ACCOUNT = config(
     'PRIVATE_STORAGE_RUNTIME_SERVICE_ACCOUNT', default='',
 ).strip()
@@ -232,6 +238,15 @@ KYC_ANTIVIRUS_BACKEND = config(
     'KYC_ANTIVIRUS_BACKEND', default='test' if DEBUG else 'disabled',
 ).strip().lower()
 KYC_CLAMAV_BINARY = config('KYC_CLAMAV_BINARY', default='clamscan').strip()
+KYC_REVIEW_ENCRYPTION_KEY = config('KYC_REVIEW_ENCRYPTION_KEY', default='').strip()
+KYC_REVIEW_DOCUMENT_URL_TTL_SECONDS = config('KYC_REVIEW_DOCUMENT_URL_TTL_SECONDS', default=300, cast=int)
+KYC_REVIEW_SLA_HOURS = config('KYC_REVIEW_SLA_HOURS', default=24, cast=int)
+KYC_REVIEW_ANOMALY_ACCESS_THRESHOLD = config(
+    'KYC_REVIEW_ANOMALY_ACCESS_THRESHOLD', default=25, cast=int,
+)
+KYC_REVIEW_ANOMALY_WINDOW_MINUTES = config(
+    'KYC_REVIEW_ANOMALY_WINDOW_MINUTES', default=15, cast=int,
+)
 KYC_SCAN_TIMEOUT_SECONDS = config('KYC_SCAN_TIMEOUT_SECONDS', default=30, cast=int)
 KYC_MAX_IMAGE_PIXELS = config('KYC_MAX_IMAGE_PIXELS', default=24_000_000, cast=int)
 KYC_MAX_PDF_PAGES = config('KYC_MAX_PDF_PAGES', default=25, cast=int)
@@ -276,7 +291,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # REST Framework configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'authentication.authentication.VerifiedEmailJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -317,8 +332,11 @@ SIMPLE_JWT = {
     'TOKEN_TYPE_CLAIM': 'token_type',
 }
 
-# CORS settings - Configuration pour Flutter et developpement
-CORS_ALLOW_ALL_ORIGINS = True  # Temporaire pour diagnostic/developpement
+# CORS settings - Flutter native does not require CORS.  Keep the allow-list
+# explicit so a development diagnostic setting cannot silently ship to a
+# private-storage deployment.  Direct KYC PUT CORS is configured and verified
+# on the storage bucket, not by this Django middleware.
+CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=False, cast=bool)
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://localhost:8080',
@@ -384,6 +402,18 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'profiles.tasks.expire_verified_kyc_attempts',
         'schedule': crontab(minute='*/15'),
     },
+    'alert-overdue-kyc-reviews': {
+        'task': 'profiles.tasks.alert_overdue_kyc_reviews',
+        'schedule': 900,
+    },
+    'alert-kyc-review-access-anomalies': {
+        'task': 'profiles.tasks.alert_kyc_review_access_anomalies',
+        'schedule': 900,
+    },
+    'dispatch-due-kyc-decision-emails': {
+        'task': 'profiles.tasks.dispatch_due_kyc_decision_emails',
+        'schedule': crontab(minute='*/5'),
+    },
     'reconcile-pending-mycoolpay-payments': {
         'task': 'subscriptions.tasks.reconcile_pending_mycoolpay_payments',
         'schedule': crontab(minute='*/5'),
@@ -423,15 +453,6 @@ FIREBASE_STORAGE_BUCKET = config(
     default='hivmeet-f76f8.firebasestorage.app'
 )
 
-# Email configuration
-EMAIL_BACKEND = config(
-    'EMAIL_BACKEND', 
-    default='django.core.mail.backends.console.EmailBackend'
-)
-DEFAULT_FROM_EMAIL = config(
-    'DEFAULT_FROM_EMAIL', 
-    default='HIVMeet <noreply@hivmeet.com>'
-)
 EMAIL_SUBJECT_PREFIX = '[HIVMeet] '
 
 # MyCoolPay Paylink configuration. Secrets stay server-side.
@@ -573,13 +594,53 @@ if DEBUG and not _redis_is_reachable(_REDIS_URL):
 # Session configuration
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 
-# In production, use real email service:
-# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-# EMAIL_HOST = config('EMAIL_HOST')
-# EMAIL_PORT = config('EMAIL_PORT', cast=int)
-# EMAIL_USE_TLS = config('EMAIL_USE_TLS', cast=bool)
-# EMAIL_HOST_USER = config('EMAIL_HOST_USER')
-# EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')
+# SMTP is configurable through the deployment environment.  Console delivery is
+# useful only for local development and never demonstrates a delivered email.
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND',
+    default=(
+        'django.core.mail.backends.console.EmailBackend'
+        if DEBUG
+        else 'django.core.mail.backends.smtp.EmailBackend'
+    ),
+)
+EMAIL_HOST = config('EMAIL_HOST', default='')
+EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+EMAIL_USE_SSL = config('EMAIL_USE_SSL', default=False, cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=15, cast=int)
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='HIVMeet <noreply@hivmeet.invalid>')
+
+KYC_DECISION_EMAIL_MAX_ATTEMPTS = config(
+    'KYC_DECISION_EMAIL_MAX_ATTEMPTS', default=5, cast=int,
+)
+KYC_DECISION_EMAIL_RETRY_BASE_SECONDS = config(
+    'KYC_DECISION_EMAIL_RETRY_BASE_SECONDS', default=60, cast=int,
+)
+KYC_DECISION_EMAIL_RETRY_MAX_SECONDS = config(
+    'KYC_DECISION_EMAIL_RETRY_MAX_SECONDS', default=3600, cast=int,
+)
+KYC_DECISION_EMAIL_SENDING_TIMEOUT_SECONDS = config(
+    'KYC_DECISION_EMAIL_SENDING_TIMEOUT_SECONDS', default=900, cast=int,
+)
+
+if (
+    KYC_DECISION_EMAIL_MAX_ATTEMPTS < 1
+    or KYC_DECISION_EMAIL_RETRY_BASE_SECONDS < 1
+    or KYC_DECISION_EMAIL_RETRY_MAX_SECONDS < KYC_DECISION_EMAIL_RETRY_BASE_SECONDS
+    or KYC_DECISION_EMAIL_SENDING_TIMEOUT_SECONDS < 1
+):
+    raise RuntimeError('La configuration de reprise des e-mails KYC est invalide.')
+
+if HIVMEET_DEPLOYMENT_ENVIRONMENT == 'production':
+    if EMAIL_BACKEND != 'django.core.mail.backends.smtp.EmailBackend' or not EMAIL_HOST:
+        raise RuntimeError(
+            'Une configuration SMTP est obligatoire hors DEBUG pour les e-mails KYC.',
+        )
+    if EMAIL_USE_TLS and EMAIL_USE_SSL:
+        raise RuntimeError('EMAIL_USE_TLS et EMAIL_USE_SSL sont exclusifs.')
 
 # Logging configuration
 LOGGING = {

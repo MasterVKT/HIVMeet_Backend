@@ -389,7 +389,19 @@ class KycWebSocketPhase1Tests(TransactionTestCase):
             await communicator.disconnect()
         return connected, detail
 
-    def test_unverified_user_cannot_open_social_websockets(self):
+    def test_email_unverified_user_cannot_open_social_websockets(self):
+        conversation_path = f'/ws/conversations/{uuid4()}/'
+        connected, close_code = async_to_sync(self._connect)(conversation_path)
+        self.assertFalse(connected)
+        self.assertEqual(close_code, 4000)
+
+        connected, close_code = async_to_sync(self._connect)('/ws/notifications/')
+        self.assertFalse(connected)
+        self.assertEqual(close_code, 4000)
+
+    def test_email_verified_user_without_kyc_cannot_open_social_websockets(self):
+        self.user.email_verified = True
+        self.user.save(update_fields=['email_verified'])
         conversation_path = f'/ws/conversations/{uuid4()}/'
         connected, close_code = async_to_sync(self._connect)(conversation_path)
         self.assertFalse(connected)

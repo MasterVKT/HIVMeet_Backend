@@ -14,6 +14,7 @@ from subscriptions.utils import (
     invalidate_premium_status_cache,
     is_premium_user,
 )
+from profiles.test_support import grant_social_access
 
 
 class PremiumEntitlementActivationTests(TestCase):
@@ -31,6 +32,7 @@ class PremiumEntitlementActivationTests(TestCase):
             display_name='Target',
             birth_date=date(1991, 1, 1),
         )
+        grant_social_access(self.user, self.target)
         self.plan = SubscriptionPlan.objects.create(
             plan_id='phase4-monthly',
             name='Premium monthly',

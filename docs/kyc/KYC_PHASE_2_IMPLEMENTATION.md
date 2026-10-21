@@ -10,7 +10,7 @@
 | Sujet | Implémentation | Garantie / échec sûr |
 |---|---|---|
 | Buckets | `infra/kyc_private_storage/` définit deux buckets distincts KYC et médias profil, UBLA, prévention d'accès public, CMEK, IAM du seul compte runtime, chiffrement par l'agent GCS, signature V4 par workload identity, CORS minimal et protection Terraform contre la destruction de bucket. | Aucun binding `allUsers` ou `allAuthenticatedUsers`; aucun secret Terraform ni clé JSON. Le gate runtime vérifie aussi UBLA, CMEK, prévention d'accès public, CORS et IAM. Le plan réel doit être revu avant apply. |
-| Configuration | `KYC_*` et `PROFILE_MEDIA_*` dans `env.example` et `settings.py`; identifiants de buckets/clés seulement. L'intention d'upload est valable 30 minutes par défaut, comme le défi selfie. | `memory` est limité aux tests/développement. En production, le démarrage refuse un backend non GCS, des buckets/CMEK absents ou identiques, un compte runtime absent, une rétention KYC non positive, un scanner autre que ClamAV, un exécutable ClamAV vide, ou toute limite/TTL/durée de quarantaine/timeout de scan non positive. La commande de gate confirme aussi que ce compte possède `roles/storage.objectAdmin` sur chaque bucket et refuse tout autre principal avec rôle d'accès aux objets. Les photos sont bornées à 5 MiB et par nombre de pixels, y compris hors endpoint HTTP ; une lifecycle KYC ne supprime pas une photo de profil active selon son seul âge. |
+| Configuration | `env.example` fournit un mode développement isolé : stockage `memory`, scanner `test`, rétention d'un jour et aucun identifiant de bucket, CMEK ou compte runtime. Les identifiants GCS/CMEK sont réservés au gestionnaire de secrets de production. L'intention d'upload est valable 30 minutes par défaut, comme le défi selfie. | `memory` et le scanner `test` sont limités aux tests/développement et aux seuls fichiers synthétiques. En production, le démarrage refuse un backend non GCS, des buckets/CMEK absents ou identiques, un compte runtime absent, une rétention KYC non positive, un scanner autre que ClamAV, un exécutable ClamAV vide, ou toute limite/TTL/durée de quarantaine/timeout de scan non positive. La commande de gate confirme aussi que ce compte possède `roles/storage.objectAdmin` sur chaque bucket et refuse tout autre principal avec rôle d'accès aux objets. Les photos sont bornées à 5 MiB et par nombre de pixels, y compris hors endpoint HTTP ; une lifecycle KYC ne supprime pas une photo de profil active selon son seul âge. |
 | Intentions KYC | `POST upload-intents` persiste une déclaration opaque/idempotente puis émet une URL PUT V4 non persistée, liée au MIME, à la taille déclarée, à l'expiration et à `ifGenerationMatch=0`. Le client doit envoyer `Content-Length` exactement égal à la déclaration. Les réponses KYC, y compris le défi selfie et l'URL PUT, portent `Cache-Control: no-store`, `Pragma: no-cache` et `X-Content-Type-Options: nosniff`. | Aucun chemin, URL, code, hash, document, e-mail ou donnée médicale dans les modèles de réponse, audit ou tâche. Toute clé d'idempotence présente dans un audit est une empreinte HMAC non réversible, jamais la valeur client brute. |
 | Validation | `POST upload-intents/complete` ne reçoit que l'identifiant opaque et met en file `verify_kyc_upload`. La tâche vérifie objet, taille, MIME déclaré/réel, SHA-256, parseur structurel borné (pixels image, pages et objets PDF) et antivirus. | Scanner indisponible, objet absent, incohérence, PDF chiffré/trop complexe ou malware : quarantaine et expiration; aucun document ne devient utilisable. Il n'y a ni biométrie ni fournisseur KYC externe. |
 | Expiration/purge | Beat expire les intentions toutes les 5 min, les KYC validés arrivés à échéance toutes les 15 min et les purges dues toutes les 10 min; les tâches sont bornées, idempotentes et reprennent avec backoff. | L'expiration persiste `expired`, invalide la projection et programme la purge; la suppression est vérifiée avant `purged`. `purge_attempts`, `next_purge_attempt_at`, `purged_at` et `deletion_verified_at` conservent une preuve minimale. |
@@ -22,6 +22,21 @@
 Les exports existants sérialisent le profil et des données de compte minimisées
 seulement; ils n'incluent ni `KycDocument`, ni `KycUploadIntent`, ni objet,
 code, URL signée, chemin, information médicale ou e-mail complet.
+
+## Recette locale de développement
+
+Le fichier `env.example` est directement adapté à la simulation locale : il
+conserve `KYC_SOCIAL_ACCESS_ENFORCEMENT=enforced`, mais utilise les deux
+adaptateurs mémoire et le scanner `test`. Aucun bucket, CMEK, URL signée
+utilisable, document réel ou antivirus de production n'est sollicité. Les
+fixtures doivent être synthétiques : le scanner `test` ne constitue ni une
+assurance antivirus ni une décision humaine KYC.
+
+Dans ce mode précis, `python manage.py verify_private_storage --scope all`
+valide les deux adaptateurs mémoire même si les identifiants cloud sont vides.
+La contrainte de buckets et CMEK distincts reste obligatoire dès que les deux
+adaptateurs sont configurés sur GCS. Cette exception locale n'affaiblit donc
+pas le gate de production.
 
 ## Procédure d'exploitation à faire approuver
 

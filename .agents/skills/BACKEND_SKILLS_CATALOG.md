@@ -30,7 +30,16 @@
 - `.agents/skills/refactor-safely/SKILL.md`
 - `.agents/skills/review-changes/SKILL.md`
 
+## Back-office Skill Set (application d'administration isolée `backoffice/`)
+- `.agents/skills/backoffice-independence-guard/SKILL.md` (charger en premier)
+- `.agents/skills/backoffice-development/SKILL.md`
+- `.agents/skills/backoffice-security/SKILL.md`
+- `.agents/skills/backoffice-testing/SKILL.md`
+- `.agents/skills/backoffice-phase-handoff/SKILL.md`
+- Plan et état : `docs/backoffice/PLAN.md`, `docs/backoffice/HANDOFF.md`
+
 ## Suggested Routing Shortcuts
+- Back-office module: backoffice-development + backoffice-security (garde d'indépendance toujours)
 - New endpoint: drf-api-development + serializer-validation
 - Auth issue: firebase-auth-sync + security-permissions
 - Model/data evolution: migrations-data-integrity + backend-testing-strategy

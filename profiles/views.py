@@ -18,7 +18,7 @@ from datetime import timedelta
 import logging
 
 from .catalog import normalize_catalog_search
-from .models import GeoCity, GeoCountry, Profile, ProfilePhoto
+from .models import GeoCity, GeoCountry, KycAttempt, Profile, ProfilePhoto
 from .serializers import (
     ProfileSerializer,
     ProfileCreateUpdateSerializer,
@@ -32,7 +32,11 @@ from .serializers import (
     KycStartSerializer,
     KycUploadIntentRequestSerializer,
     KycUploadCompleteSerializer,
+    KycMultipartUploadSerializer,
     KycSubmitRequestSerializer,
+    KycReviewerMfaCodeSerializer,
+    KycCaseAssignmentSerializer,
+    KycDecisionRequestSerializer,
 )
 from hivmeet_backend.utils import api_error_response
 from .photo_storage import (
@@ -52,7 +56,19 @@ from .kyc import (
     serialize_kyc_upload_intent,
     serialize_safe_kyc_status,
     start_or_resume_kyc_attempt,
+    store_kyc_multipart_upload,
     submit_kyc_attempt,
+)
+from .kyc_review import (
+    KYC_SUPERVISOR_GROUP,
+    assign_kyc_case,
+    begin_mfa_enrollment,
+    confirm_mfa_enrollment,
+    decide_kyc_case,
+    issue_reviewer_document_url,
+    read_reviewer_document_for_development,
+    require_reviewer_mfa,
+    verify_reviewer_mfa,
 )
 from subscriptions.utils import is_premium_user
 
@@ -73,6 +89,23 @@ def _kyc_private_response(payload, *, response_status=status.HTTP_200_OK):
     response['Pragma'] = 'no-cache'
     response['X-Content-Type-Options'] = 'nosniff'
     return response
+
+
+def _reviewer_assertion(request):
+    return request.headers.get('X-KYC-MFA-Assertion', '')
+
+
+def _review_case_payload(attempt):
+    """Safe internal work-queue data; evidence remains behind separate access."""
+    return {
+        'attempt_id': str(attempt.id),
+        'status': attempt.status,
+        'submitted_at': attempt.submitted_at,
+        'documents': [
+            {'type': document.document_type, 'state': document.scan_status}
+            for document in attempt.documents.all()
+        ],
+    }
 
 
 class MyProfileView(generics.RetrieveUpdateAPIView):
@@ -694,7 +727,7 @@ def start_kyc_attempt_view(request):
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def create_kyc_upload_intent_view(request):
-    """Issue a transient constrained PUT URL for an opaque private object."""
+    """Issue one server-owned declaration for direct or multipart upload."""
     serializer = KycUploadIntentRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     intent, replay = issue_kyc_upload_intent(
@@ -705,6 +738,32 @@ def create_kyc_upload_intent_view(request):
     return _kyc_private_response(
         payload,
         response_status=status.HTTP_200_OK if replay else status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([permissions.IsAuthenticated])
+def upload_kyc_multipart_file_view(request, upload_id):
+    """Accept a development-local KYC file without exposing a storage URL."""
+    serializer = KycMultipartUploadSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    intent, replay = store_kyc_multipart_upload(
+        user=request.user,
+        upload_id=upload_id,
+        uploaded_file=serializer.validated_data['file'],
+    )
+    if not replay:
+        from profiles.tasks import verify_kyc_upload
+
+        transaction.on_commit(lambda: verify_kyc_upload.delay(str(intent.id)))
+    return _kyc_private_response(
+        {
+            'upload_id': str(intent.id),
+            'state': 'processing',
+            'idempotent_replay': replay,
+        },
+        response_status=status.HTTP_202_ACCEPTED,
     )
 
 
@@ -772,3 +831,113 @@ def generate_upload_url_view(request):
 def submit_verification_documents_view(request):
     """Block the unsafe historical client-supplied storage-path contract."""
     raise KycLegacyEndpointDeprecated()
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def kyc_reviewer_mfa_enroll_view(request):
+    _, provisioning_uri = begin_mfa_enrollment(user=request.user)
+    return _kyc_private_response({'provisioning_uri': provisioning_uri}, response_status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def kyc_reviewer_mfa_confirm_view(request):
+    serializer = KycReviewerMfaCodeSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    confirm_mfa_enrollment(user=request.user, code=serializer.validated_data['code'])
+    return _kyc_private_response({'status': 'confirmed'})
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def kyc_reviewer_mfa_verify_view(request):
+    serializer = KycReviewerMfaCodeSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    assertion, expires_at = verify_reviewer_mfa(user=request.user, code=serializer.validated_data['code'])
+    return _kyc_private_response({'assertion': assertion, 'expires_at': expires_at})
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def kyc_review_case_list_view(request):
+    role = require_reviewer_mfa(user=request.user, assertion=_reviewer_assertion(request))
+    assignments = request.user.kyc_supervised_review_cases if role == KYC_SUPERVISOR_GROUP else request.user.kyc_review_cases
+    cases = assignments.filter(closed_at__isnull=True).select_related('attempt').prefetch_related('attempt__documents')[:50]
+    return _kyc_private_response({'cases': [_review_case_payload(item.attempt) for item in cases]})
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def kyc_review_unassigned_case_list_view(request):
+    role = require_reviewer_mfa(user=request.user, assertion=_reviewer_assertion(request))
+    if role != KYC_SUPERVISOR_GROUP:
+        raise PermissionDenied()
+    cases = KycAttempt.objects.filter(status=KycAttempt.PENDING_REVIEW, is_open=True, review_assignment__isnull=True).prefetch_related('documents').order_by('submitted_at')[:50]
+    return _kyc_private_response({'cases': [_review_case_payload(case) for case in cases]})
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def assign_kyc_review_case_view(request, case_id):
+    role = require_reviewer_mfa(user=request.user, assertion=_reviewer_assertion(request))
+    if role != KYC_SUPERVISOR_GROUP:
+        raise PermissionDenied()
+    serializer = KycCaseAssignmentSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    assignment = assign_kyc_case(supervisor=request.user, attempt_id=case_id, reviewer_id=serializer.validated_data['reviewer_id'])
+    return _kyc_private_response({'attempt_id': str(assignment.attempt_id), 'status': 'assigned'})
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def kyc_review_case_detail_view(request, case_id):
+    role = require_reviewer_mfa(user=request.user, assertion=_reviewer_assertion(request))
+    from .kyc_review import _assigned_case_or_denied
+    with transaction.atomic():
+        assignment = _assigned_case_or_denied(actor=request.user, role=role, attempt_id=case_id)
+        return _kyc_private_response(_review_case_payload(assignment.attempt))
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def issue_kyc_review_document_url_view(request, case_id, document_id):
+    role = require_reviewer_mfa(user=request.user, assertion=_reviewer_assertion(request))
+    url, expires_at = issue_reviewer_document_url(
+        actor=request.user, role=role, attempt_id=case_id, document_id=document_id,
+    )
+    return _kyc_private_response({'url': url, 'expires_at': expires_at})
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def read_kyc_review_document_development_view(request, case_id, document_id):
+    role = require_reviewer_mfa(user=request.user, assertion=_reviewer_assertion(request))
+    content, content_type = read_reviewer_document_for_development(
+        actor=request.user, role=role, attempt_id=case_id, document_id=document_id,
+    )
+    response = HttpResponse(content, content_type=content_type or 'application/octet-stream')
+    response['Cache-Control'] = 'no-store, max-age=0'
+    response['Pragma'] = 'no-cache'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def decide_kyc_review_case_view(request, case_id):
+    role = require_reviewer_mfa(user=request.user, assertion=_reviewer_assertion(request))
+    serializer = KycDecisionRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    values = serializer.validated_data
+    record, replay = decide_kyc_case(
+        actor=request.user, role=role, attempt_id=case_id,
+        decision=values['decision'], reason_code=values['reason_code'],
+        internal_comment=values.get('internal_comment', ''),
+        idempotency_key=values['idempotency_key'],
+    )
+    record.attempt.refresh_from_db(fields=['status', 'expires_at'])
+    return _kyc_private_response({
+        'attempt_id': str(record.attempt_id), 'status': record.attempt.status,
+        'expires_at': record.attempt.expires_at, 'idempotent_replay': replay,
+    })

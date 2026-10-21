@@ -1,5 +1,5 @@
 # HIVMeet Backend Dockerfile
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . /app/
 
 # Create directory for static files
-RUN mkdir -p /app/staticfiles /app/media
+RUN mkdir -p /app/staticfiles /app/media /app/private_uploads
 
 # Collect static files (will be done in production)
 # RUN python manage.py collectstatic --noinput
@@ -44,4 +44,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health/ || exit 1
 
 # Default command
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "hivmeet_backend.wsgi:application"] 
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "hivmeet_backend.wsgi:application"]

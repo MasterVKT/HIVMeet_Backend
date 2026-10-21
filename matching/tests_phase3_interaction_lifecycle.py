@@ -21,6 +21,7 @@ from matching.models import (
     Like,
     Match,
 )
+from matching.test_support import grant_social_access
 
 
 User = get_user_model()
@@ -35,7 +36,7 @@ class InteractionLifecyclePhaseThreeTests(APITestCase):
 
     @staticmethod
     def _user(slug, display_name):
-        return User.objects.create_user(
+        user = User.objects.create_user(
             email=f'{slug}@example.test',
             password='testpass123',
             display_name=display_name,
@@ -43,6 +44,8 @@ class InteractionLifecyclePhaseThreeTests(APITestCase):
             email_verified=True,
             is_active=True,
         )
+        grant_social_access(user)
+        return user
 
     def _rewind(self, interaction_id):
         with patch(
@@ -368,6 +371,7 @@ class InteractionConcurrencyPhaseThreeTests(TransactionTestCase):
             email_verified=True,
             is_active=True,
         )
+        grant_social_access(self.actor, self.target)
 
     def test_concurrent_different_actions_leave_one_active_projection(self):
         start = threading.Barrier(2)

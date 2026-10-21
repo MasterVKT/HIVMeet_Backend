@@ -17,14 +17,42 @@
 
 ## Authentification
 
+### Contrat de verification e-mail Firebase (phase 1)
+
+Firebase est la source de verite de la verification d'adresse. `POST /api/v1/auth/register/`
+repond `201` apres la creation coordonnee des
+comptes avec `{ "user_id": "uuid", "verification_required": true }`; cette
+reponse ne prouve jamais la livraison d'un e-mail et ne contient pas de JWT.
+L'application mobile se connecte a Firebase uniquement pour appeler
+`sendEmailVerification()` puis attend que `reload()` confirme
+`emailVerified=true`.
+
+`POST /api/v1/auth/firebase-exchange/`, `POST /api/v1/auth/login` et `POST
+/api/v1/auth/refresh-token` repondent `403` avec le code stable
+`email_not_verified` tant que Firebase ne confirme pas l'adresse. Les routes
+REST protegees et les WebSockets refusent egalement les anciens JWT de ce
+compte. Le client traduit ce code localement et efface ses JWT Django avant de
+presenter l'ecran d'attente.
+
+`GET /api/v1/auth/verify-email/{verification_token}` demeure disponible pour
+un lien Django ancien encore valide. Il met Firebase a jour avant la projection
+locale. Les nouvelles inscriptions ne recoivent plus de lien Django.
+
 ### POST `/api/v1/auth/register/`
 - **Description**: creates the Django and Firebase accounts with compensation.
 - **Request**:
   ```json
   {"email":"string","password":"string","password_confirm":"string","display_name":"string","birth_date":"YYYY-MM-DD","gender":"male|female","phone_number":"string?"}
   ```
-- **Response** (201): `{ "user_id": "uuid", "email": "string", "display_name": "string" }`.
-- **Errors**: 400 validation; 500 `registration_failed` without internal detail.
+- **Response** (201): `{ "user_id": "uuid", "verification_required": true }`.
+  Cette reponse confirme la creation du compte en attente; elle ne confirme
+  pas la livraison du message Firebase et ne fournit pas de JWT Django.
+- **Errors**: 400 validation with `{ "error": true, "code": "registration_invalid",
+  "message": "...", "details": {champ: [messages]},
+  "field_errors": {champ: [codes]} }`. Le client localise uniquement les
+  codes stables (`unique`, `password_too_common`, `invalid_characters`,
+  `age_requirement`, `invalid`, ...); il n'affiche jamais `details` brut.
+  500 `registration_failed` without internal detail.
 
 ---
 
@@ -58,7 +86,10 @@
 - **Description**: exchanges a Firebase token for an already registered account.
 - **Request**: `{ "firebase_token": "string" }`.
 - **Response** (200): JWT tokens and user snapshot.
-- **Errors**: `409 registration_required` when no local account exists; `409 firebase_uid_mismatch` when the identity differs. With the secure default `HIVMEET_REQUIRE_EXPLICIT_REGISTRATION=True`, this route never creates a local account. The documented, temporary legacy bridge is available only while that setting is explicitly false.
+- **Errors**: `403 email_not_verified` when the signed Firebase claim is not
+  verified; `409 registration_required` when no local account exists; `409
+  firebase_uid_mismatch` when the identity differs. This route never creates a
+  local account, irrespective of environment settings.
 
 ---
 
@@ -261,7 +292,9 @@ les règles de transition, migration et retour arrière.
 > gates documentés.
 - **Description** : état KYC sûr du demandeur : statut, tentative, états sûrs
   des documents et dates. Elle ne renvoie jamais code, URL, chemin, hash ou
-  document.
+  document. L'état de document `rejected` indique uniquement qu'un contrôle
+  technique a refusé l'objet ; aucun motif, contenu ou détail de pièce n'est
+  retourné.
 
 ---
 
@@ -275,10 +308,19 @@ les règles de transition, migration et retour arrière.
 ---
 
 ### POST `/api/v1/user-profiles/me/verification/upload-intents/`
+> **Transport :** la reponse porte `upload_transport`. `direct_put` retourne
+> une URL PUT V4 courte pour le stockage prive GCS. En developpement local,
+> `backend_multipart` ne retourne ni URL ni en-tete de stockage : le client
+> envoie alors le champ multipart `file` a la route authentifiee ci-dessous.
+> Dans les deux cas, aucune cle opaque, chemin ou contenu de piece n'est
+> retourne.
+> La description historique qui suit decrit uniquement la branche `direct_put`.
+
 - **Description** : crée ou rejoue une intention d'upload à usage unique vers
   un objet KYC à clé opaque. La réponse `201` (ou `200` en rejeu idempotent)
-  contient `upload_id`, `expires_at`, l'en-tête obligatoire `Content-Type` et
-  une URL PUT V4 courte. L'URL n'est ni persistée ni journalisée.
+  contient toujours `upload_id` et `expires_at`. Avec `direct_put`, elle
+  contient aussi l'en-tête obligatoire `Content-Type` et une URL PUT V4
+  courte. L'URL n'est ni persistée ni journalisée.
 - **Contraintes** : identité officielle ou document médical/sérologique : JPEG,
   PNG ou PDF, jusqu'à 10 MiB ; selfie avec défi : JPEG/PNG, jusqu'à 5 MiB. Le
   type, la taille et le SHA-256 déclarés sont revalidés côté serveur après PUT.
@@ -287,7 +329,20 @@ les règles de transition, migration et retour arrière.
 
 ---
 
+### POST `/api/v1/user-profiles/me/verification/upload-intents/{upload_id}/file/`
+> **Developpement/test local seulement :** envoi multipart authentifie du seul
+> champ `file`. Le backend compare les octets a l'intention serveur (taille et
+> SHA-256), les ecrit dans un repertoire prive hors de `MEDIA_ROOT`, puis
+> programme le controle technique. `202` retourne seulement `{upload_id,
+> state: "processing", idempotent_replay}`. Les erreurs possibles sont `400
+> invalid_upload_file`, `401`, `409`, `410 intent_expired`, `413` et `503`.
+> Aucune URL de stockage, cle, chemin ou piece n'est renvoyee.
+
+---
+
 ### POST `/api/v1/user-profiles/me/verification/upload-intents/complete/`
+> Cette route est reservee a `direct_put`. `backend_multipart` confirme et
+> programme l'analyse dans sa route de fichier, sans appel supplementaire.
 - **Description** : confirme seulement l'`upload_id` après PUT direct et
   programme le scan Celery idempotent. La réponse `202` retourne
   `{upload_id, state: "processing", idempotent_replay}` ; elle ne signifie pas
@@ -300,6 +355,20 @@ les règles de transition, migration et retour arrière.
 ---
 
 ### POST `/api/v1/user-profiles/me/verification/submit/`
+
+> **Decision interne KYC et notification e-mail.**
+
+La route interne de decision KYC conserve son contrat public. Une nouvelle
+decision humaine cree, dans la meme transaction, une notification applicative
+generique et un enregistrement interne unique de livraison e-mail. Apres le
+commit, Celery envoie un message bilingue neutre qui invite seulement a ouvrir
+l'application. La reponse API ne confirme jamais une livraison e-mail.
+
+L'e-mail n'inclut ni decision, motif, piece, commentaire interne, donnee
+medicale, URL, chemin ni adresse complete. Avant chaque tentative, le worker
+verifie l'adresse Firebase actuellement validee. Les echecs SMTP transitoires
+sont rejoues; un echec durable ou une adresse non validee est trace
+interieurement sans revoquer la decision KYC.
 - **Description** : accepte uniquement trois intents serveur consommés et
   techniquement acceptés, avec défi selfie non expiré et clé d'idempotence.
 - **Réponse** : 202 pending_review; 409 pour transition/intents invalides,
@@ -776,6 +845,37 @@ Note: L'URL premium d'appel est exposée sous le préfixe `conversations/` dans 
 ---
 
 ## Monitoring
+
+## Revue KYC interne
+
+> En developpement/test local, la consultation protegee de contenu accepte le
+> stockage `local` aussi bien que `memory`, toujours avec MFA, attribution et
+> reponse `no-store`. Elle ne publie jamais de repertoire ou d'URL de stockage.
+
+Les routes `/api/v1/internal/kyc/` sont réservées à l'exploitation interne.
+Elles exigent un JWT, un groupe `kyc_reviewer` ou `kyc_supervisor` et le header
+éphémère `X-KYC-MFA-Assertion`. Les réponses utilisent `Cache-Control: no-store`.
+Un réviseur ne voit que les dossiers qui lui sont attribués ; les superviseurs
+attribuent les dossiers et restent eux-mêmes limités à leur périmètre explicite.
+Les routes couvrent l'enrôlement/confirmation/assertion MFA, file de dossiers,
+attribution, détail sûr, URL de consultation brève et décision. Elles ne
+renvoient jamais chemin de stockage, détail médical, commentaire interne,
+e-mail complet ou export documentaire.
+
+| Route | Accès et contrat |
+|---|---|
+| `POST /api/v1/internal/kyc/mfa/enroll/` | Groupe KYC requis. Uniquement en développement/test : retourne une URI de provisionnement TOTP dans une réponse `no-store`. |
+| `POST /api/v1/internal/kyc/mfa/confirm/`, `POST /api/v1/internal/kyc/mfa/assertions/` | Groupe KYC requis ; corps `{ "code": "123456" }`. La seconde retourne une assertion opaque valable cinq minutes. |
+| `GET /api/v1/internal/kyc/cases/`, `GET .../cases/unassigned/` | Assertion MFA requise. Un superviseur voit les dossiers non attribués ; toute autre liste est limitée aux attributions explicites. |
+| `POST /api/v1/internal/kyc/cases/{case_id}/assignment/` | Assertion MFA + superviseur ; corps `{ "reviewer_id": "uuid" }`. |
+| `GET /api/v1/internal/kyc/cases/{case_id}/`, `POST .../documents/{document_id}/access/` | Assertion MFA + attribution. La seconde retourne seulement une URL GET temporaire et `expires_at`; elle n'est jamais persistée ou journalisée. |
+| `GET .../documents/{document_id}/development-content/` | Exception de simulation : fixture synthétique en stockage mémoire, `DEBUG`/`TESTING`, MFA et attribution obligatoires. Refusée autrement ; jamais pour une pièce réelle. |
+| `POST /api/v1/internal/kyc/cases/{case_id}/decision/` | Assertion MFA + attribution ; décision `verified`, `rejected` ou `revoked`, motif standardisé, commentaire interne optionnel et clé d'idempotence. |
+
+Les alertes SLA et anomalies sont exclusivement des événements système
+génériques (`kyc_review_sla`, `kyc_review_anomaly`) ; elles ne transmettent
+aucun dossier, document, e-mail, URL ou donnée médicale. La notification
+utilisateur est `verification_update` et ne contient pas le motif détaillé.
 
 ### GET `/health/`
 ### GET `/health/simple/`

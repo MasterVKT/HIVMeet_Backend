@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from matching.models import DailyLikeLimit, Dislike, InteractionHistory, Like, Match
+from matching.test_support import grant_social_access
 
 
 User = get_user_model()
@@ -29,6 +30,7 @@ class ExplicitInteractionRewindTests(APITestCase):
             birth_date=date(1992, 1, 1),
             email_verified=True,
         )
+        grant_social_access(self.actor, self.target)
         self.client.force_authenticate(self.actor)
 
     def _create_dislike(self):

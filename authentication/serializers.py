@@ -42,23 +42,30 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     
     def validate_email(self, value):
         """Validate email format and uniqueness."""
-        if User.objects.filter(email=value).exists():
+        normalized = value.strip().lower()
+        if User.objects.filter(email__iexact=normalized).exists():
             raise serializers.ValidationError(
-                _("A user with this email already exists.")
+                _("A user with this email already exists."),
+                code='unique',
             )
-        return value.lower()
+        return normalized
     
     def validate_display_name(self, value):
         """Validate display name."""
+        value = value.strip()
         if len(value) < 3 or len(value) > 30:
             raise serializers.ValidationError(
-                _("Display name must be between 3 and 30 characters.")
+                _("Display name must be between 3 and 30 characters."),
+                code='invalid_length',
             )
         
-        # Check for inappropriate content (basic check)
-        if re.search(r'[<>\"\'&]', value):
+        # Markup delimiters and control characters are rejected. Apostrophes
+        # and ampersands are legitimate in names (e.g. "N'Guessan") and are
+        # escaped when displayed, so they must not block registration.
+        if re.search(r'[<>"]', value) or any(ord(char) < 32 for char in value):
             raise serializers.ValidationError(
-                _("Display name contains invalid characters.")
+                _("Display name contains invalid characters."),
+                code='invalid_characters',
             )
         
         return value
@@ -66,37 +73,55 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     def validate_birth_date(self, value):
         """Validate birth date (must be 18+)."""
         if not value:
-            raise serializers.ValidationError(_("Birth date is required."))
+            raise serializers.ValidationError(
+                _("Birth date is required."),
+                code='required',
+            )
         
         today = date.today()
         age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
         
         if age < 18:
             raise serializers.ValidationError(
-                _("You must be at least 18 years old to use this service.")
+                _("You must be at least 18 years old to use this service."),
+                code='age_requirement',
             )
         
         if age > 150:
-            raise serializers.ValidationError(_("Please enter a valid birth date."))
+            raise serializers.ValidationError(
+                _("Please enter a valid birth date."),
+                code='invalid',
+            )
         
         return value
     
     def validate_phone_number(self, value):
-        """Validate phone number format."""
-        if value:
-            # Basic international phone format validation
-            phone_regex = re.compile(r'^\+?1?\d{9,15}$')
-            if not phone_regex.match(value):
-                raise serializers.ValidationError(
-                    _("Phone number must be in international format.")
-                )
-        return value
+        """Validate and normalise a phone number.
+
+        Separators commonly typed on mobile keyboards are removed before the
+        length check. The accepted contract is an optional leading ``+``
+        followed by 8 to 15 digits, which covers local and international
+        numbers used by the mobile client.
+        """
+        if not value:
+            return value
+
+        normalized = re.sub(r'[\s\-.()]', '', value)
+        if not re.fullmatch(r'\+?[0-9]{8,15}', normalized):
+            raise serializers.ValidationError(
+                _("Phone number must be in international format."),
+                code='invalid',
+            )
+        return normalized
     
     def validate(self, attrs):
         """Validate passwords match."""
         if attrs.get('password') != attrs.get('password_confirm'):
             raise serializers.ValidationError({
-                'password_confirm': _("Password fields didn't match.")
+                'password_confirm': serializers.ErrorDetail(
+                    _("Password fields didn't match."),
+                    code='password_mismatch',
+                )
             })
         
         attrs.pop('password_confirm')

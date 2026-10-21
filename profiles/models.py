@@ -847,6 +847,185 @@ class KycAuditEvent(models.Model):
         return f"KYC audit {self.event_type} for {self.attempt_id}"
 
 
+class KycReviewerMfaDevice(models.Model):
+    """One encrypted TOTP device for a privileged internal KYC actor."""
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='kyc_reviewer_mfa_device',
+    )
+    secret_ciphertext = models.CharField(max_length=512)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    last_totp_counter = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'kyc_reviewer_mfa_devices'
+
+
+class KycReviewerMfaAssertion(models.Model):
+    """Short-lived, hashed proof of a successful reviewer MFA challenge."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='kyc_reviewer_mfa_assertions',
+    )
+    token_hash = models.CharField(max_length=256)
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'kyc_reviewer_mfa_assertions'
+        indexes = [models.Index(fields=['user', 'expires_at'])]
+
+
+class KycReviewAssignment(models.Model):
+    """Explicit review scope; privileged status alone never grants case access."""
+
+    attempt = models.OneToOneField(
+        KycAttempt,
+        on_delete=models.CASCADE,
+        related_name='review_assignment',
+    )
+    reviewer = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='kyc_review_cases',
+    )
+    supervisor = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='kyc_supervised_review_cases',
+    )
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'kyc_review_assignments'
+        indexes = [
+            models.Index(fields=['reviewer', 'closed_at']),
+            models.Index(fields=['supervisor', 'closed_at']),
+        ]
+
+
+class KycReviewDecision(models.Model):
+    """Append-only human decision; the optional internal comment is encrypted."""
+
+    VERIFIED = 'verified'
+    REJECTED = 'rejected'
+    REVOKED = 'revoked'
+    DECISION_CHOICES = [
+        (VERIFIED, _('Verified')),
+        (REJECTED, _('Rejected')),
+        (REVOKED, _('Revoked')),
+    ]
+
+    attempt = models.OneToOneField(
+        KycAttempt,
+        on_delete=models.PROTECT,
+        related_name='review_decision',
+    )
+    assignment = models.ForeignKey(
+        KycReviewAssignment,
+        on_delete=models.PROTECT,
+        related_name='decisions',
+    )
+    decided_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='kyc_review_decisions',
+    )
+    decision = models.CharField(max_length=12, choices=DECISION_CHOICES)
+    reason_code = models.CharField(max_length=80)
+    internal_comment_ciphertext = models.TextField(blank=True)
+    idempotency_fingerprint = models.CharField(max_length=80, unique=True)
+    request_fingerprint = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'kyc_review_decisions'
+        indexes = [models.Index(fields=['decision', 'created_at'])]
+
+
+class KycDecisionEmailDelivery(models.Model):
+    """One privacy-minimised delivery record for one human KYC decision.
+
+    The recipient address is intentionally not copied here.  The asynchronous
+    sender resolves it from the current account only after checking that the
+    Firebase-backed address remains verified.
+    """
+
+    PENDING = 'pending'
+    SENDING = 'sending'
+    RETRYING = 'retrying'
+    SENT = 'sent'
+    FAILED = 'failed'
+    SUPPRESSED = 'suppressed'
+    STATUS_CHOICES = [
+        (PENDING, _('Pending')),
+        (SENDING, _('Sending')),
+        (RETRYING, _('Retrying')),
+        (SENT, _('Sent')),
+        (FAILED, _('Failed')),
+        (SUPPRESSED, _('Suppressed')),
+    ]
+
+    decision = models.OneToOneField(
+        KycReviewDecision,
+        on_delete=models.PROTECT,
+        related_name='email_delivery',
+    )
+    status = models.CharField(
+        max_length=12,
+        choices=STATUS_CHOICES,
+        default=PENDING,
+        db_index=True,
+    )
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    last_error_code = models.CharField(max_length=48, blank=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    sending_started_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'kyc_decision_email_deliveries'
+        indexes = [models.Index(fields=['status', 'next_attempt_at'])]
+
+
+class KycReviewAnomalyAlert(models.Model):
+    """Idempotency record for a generic internal KYC review anomaly alert."""
+
+    DOCUMENT_ACCESS_VOLUME = 'document_access_volume'
+    CATEGORY_CHOICES = [
+        (DOCUMENT_ACCESS_VOLUME, _('Document access volume')),
+    ]
+
+    actor = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='kyc_review_anomaly_alerts',
+    )
+    category = models.CharField(max_length=48, choices=CATEGORY_CHOICES)
+    window_started_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'kyc_review_anomaly_alerts'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['actor', 'category', 'window_started_at'],
+                name='profiles_kyc_review_anomaly_once_per_window',
+            ),
+        ]
+
+
 class DataExportRequest(models.Model):
     """
     Trace une demande d'export de données personnelles (RGPD / droit d'accès).

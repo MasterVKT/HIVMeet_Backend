@@ -12,7 +12,7 @@
 
    The import records its version, SHA-256, number of cities and GeoNames attribution: <https://www.geonames.org/about.html>. `check --deploy` fails when `GEONAMES_CATALOG_REQUIRED=True` and no verified catalogue is ready.
 3. Deploy the Flutter application that sends `display_name`, `birth_date`, optional `phone_number` and `gender` (`male` or `female`) to `POST /api/v1/auth/register/` before Firebase sign-in.
-4. Keep `HIVMEET_REQUIRE_EXPLICIT_REGISTRATION=False` only for the controlled legacy-client rollout. It creates a blank, non-discoverable confirmation profile for Firebase-only identities. Once the compatible Flutter release is available, remove that temporary setting (the secure default is `True`): the exchange never creates a local account and can only attach a Firebase UID to a pre-rollout local account with the same email and no existing UID.
+4. The exchange never creates a local account. It can only attach a Firebase UID to a pre-rollout local account with the same email and no existing UID.
 
 ## Migration and rollback
 
@@ -25,7 +25,7 @@ A schema rollback restores `legacy_gender` only for profiles that have not expli
 ## Contracts
 
 - `POST /api/v1/auth/register/` requires `email`, `password`, `password_confirm`, `display_name`, `birth_date`, and `gender`; it accepts optional `phone_number`. Firebase is provisioned first and deleted if the Django transaction fails.
-- `POST /api/v1/auth/firebase-exchange/` returns `409 registration_required` for an unknown Firebase identity when `HIVMEET_REQUIRE_EXPLICIT_REGISTRATION=True`. The temporary bridge is documented above and never assigns a gender or exposes the resulting profile in Discovery.
+- `POST /api/v1/auth/firebase-exchange/` returns `409 registration_required` for every unknown Firebase identity. It never creates a profile from an ID token.
 - `PUT|PATCH /api/v1/user-profiles/me/complete/` accepts `{ "profile": {...}, "location": {...} }`. If a location is supplied, both parts validate and persist in one transaction.
 - `GET /api/v1/user-profiles/geo/countries/` and `geo/cities/?country=XX` provide paginated, case-insensitive and accent-insensitive catalogue search.
 - Automatic coordinates may contain nine decimals on input and are quantized to seven decimals before storage. Manual location remains available and removes precise coordinates.

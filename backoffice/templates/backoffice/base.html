@@ -1,0 +1,31 @@
+{% load i18n static %}<!doctype html>
+<html lang="{{ LANGUAGE_CODE|default:'fr' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}{% trans "HIVMeet back-office" %}{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'backoffice/backoffice.css' %}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{% url 'backoffice:home' %}">{% trans "HIVMeet back-office" %}</a>
+    {% if user.is_authenticated %}
+    <form class="inline" method="post" action="{% url 'backoffice:logout' %}">
+      {% csrf_token %}
+      <span class="who">{{ user.display_name }}</span>
+      <button type="submit" class="link">{% trans "Sign out" %}</button>
+    </form>
+    {% endif %}
+  </header>
+  <main class="content">
+    {% if messages %}
+    <ul class="messages" role="status">
+      {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">{% trans "Restricted area. Every action is logged." %}</footer>
+</body>
+</html>

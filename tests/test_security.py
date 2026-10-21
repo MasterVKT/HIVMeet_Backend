@@ -14,6 +14,7 @@ from tests.base import (
     SubscriptionPlanFactory,
 )
 from profiles.models import Profile, Verification
+from profiles.test_support import grant_social_access
 from matching.models import Match
 from messaging.models import Message
 from subscriptions.models import PaymentTransaction, Transaction
@@ -94,13 +95,11 @@ class AuthenticationSecurityTest(APIBaseTestCase):
     def test_jwt_token_security(self):
         """Test JWT token security features."""
         user = self.create_user()
-        response = self.client.post(reverse('authentication:login'), {
-            'email': user.email,
-            'password': 'testpass123'
-        })
-        
-        # Check token structure
-        access_token = response.data['access_token']
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        # Password login first reconciles its identity with Firebase.  This
+        # cryptographic test deliberately exercises the issued JWT itself.
+        access_token = str(RefreshToken.for_user(user).access_token)
         parts = access_token.split('.')
         self.assertEqual(len(parts), 3)  # Header, payload, signature
         
@@ -130,6 +129,7 @@ class DataAccessSecurityTest(APIBaseTestCase):
         
         self.user3 = self.create_user()
         self.profile3 = ProfileFactory(user=self.user3, allow_profile_in_discovery=False)
+        grant_social_access(self.user1, self.user2, self.user3)
     
     def test_profile_visibility_controls(self):
         """Test profile visibility restrictions."""
@@ -201,6 +201,7 @@ class InputValidationSecurityTest(APIBaseTestCase):
         ]
         
         user = self.create_authenticated_user()
+        grant_social_access(user)
         
         for payload in malicious_inputs:
             # Try in search
@@ -340,6 +341,7 @@ class WebhookSecurityTest(TestCase):
 
     def test_webhook_replay_protection(self):
         user = UserFactory()
+        grant_social_access(user)
         plan = SubscriptionPlanFactory(price=Decimal('999'), currency='XAF')
         payment = PaymentTransaction.objects.create(
             user=user,

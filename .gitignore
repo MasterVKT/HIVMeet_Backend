@@ -22,6 +22,8 @@ credentials/
 
 # Media files
 media/
+private_uploads/
+.runtime/
 
 # Static files
 staticfiles/

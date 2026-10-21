@@ -12,6 +12,7 @@ urlpatterns = [
     
     # User profiles endpoints
     path('user-profiles/', include('profiles.urls')),
+    path('internal/kyc/', include('profiles.urls_kyc_review')),
     
     # Discovery and matching endpoints
     # Discovery: supporte les deux chemins pour compatibilité frontend

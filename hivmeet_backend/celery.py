@@ -32,6 +32,18 @@ app.conf.beat_schedule = {
         'task': 'profiles.tasks.expire_verified_kyc_attempts',
         'schedule': crontab(minute='*/15'),
     },
+    'alert-overdue-kyc-reviews': {
+        'task': 'profiles.tasks.alert_overdue_kyc_reviews',
+        'schedule': crontab(minute='*/15'),
+    },
+    'alert-kyc-review-access-anomalies': {
+        'task': 'profiles.tasks.alert_kyc_review_access_anomalies',
+        'schedule': crontab(minute='*/15'),
+    },
+    'dispatch-due-kyc-decision-emails': {
+        'task': 'profiles.tasks.dispatch_due_kyc_decision_emails',
+        'schedule': crontab(minute='*/5'),
+    },
     'reconcile-pending-mycoolpay-payments': {
         'task': 'subscriptions.tasks.reconcile_pending_mycoolpay_payments',
         'schedule': crontab(minute='*/5'),

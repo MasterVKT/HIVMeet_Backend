@@ -514,3 +514,31 @@ class KycUploadCompleteSerializer(serializers.Serializer):
     """Accept only the opaque server-issued upload identifier after direct PUT."""
 
     upload_id = serializers.UUIDField()
+
+
+class KycMultipartUploadSerializer(serializers.Serializer):
+    """Accept one binary KYC field; its metadata remains server-owned."""
+
+    file = serializers.FileField()
+
+    def validate_file(self, value):
+        if value.size <= 0 or value.size > 10 * 1024 * 1024:
+            raise serializers.ValidationError(_('The selected file is too large.'))
+        return value
+
+
+class KycReviewerMfaCodeSerializer(serializers.Serializer):
+    code = serializers.RegexField(r'^\d{6}$')
+
+
+class KycCaseAssignmentSerializer(serializers.Serializer):
+    reviewer_id = serializers.UUIDField()
+
+
+class KycDecisionRequestSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=['verified', 'rejected', 'revoked'])
+    reason_code = serializers.RegexField(r'^[a-z0-9_:-]{1,80}$')
+    internal_comment = serializers.CharField(
+        required=False, allow_blank=True, max_length=500, trim_whitespace=True,
+    )
+    idempotency_key = serializers.RegexField(r'^[A-Za-z0-9._:-]{16,128}$')

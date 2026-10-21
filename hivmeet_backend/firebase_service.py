@@ -53,8 +53,8 @@ class FirebaseService:
             
             logger.info("Firebase Admin SDK initialized successfully")
             
-        except Exception as e:
-            logger.error(f"Failed to initialize Firebase: {str(e)}")
+        except Exception:
+            logger.error('Firebase Admin SDK initialization failed')
             raise
     
     @property
@@ -88,9 +88,9 @@ class FirebaseService:
         try:
             decoded_token = self._auth.verify_id_token(id_token)
             return decoded_token
-        except Exception as e:
-            logger.error(f"Token verification failed: {str(e)}")
-            raise ValueError(f"Invalid token: {str(e)}")
+        except Exception as exc:
+            logger.warning('Firebase token verification failed')
+            raise ValueError('Invalid Firebase token') from exc
     
     def create_custom_token(self, uid, additional_claims=None):
         """
@@ -105,8 +105,8 @@ class FirebaseService:
         """
         try:
             return self._auth.create_custom_token(uid, additional_claims)
-        except Exception as e:
-            logger.error(f"Failed to create custom token: {str(e)}")
+        except Exception:
+            logger.error('Firebase custom-token creation failed')
             raise
     
     def get_user(self, uid):
@@ -121,8 +121,8 @@ class FirebaseService:
         """
         try:
             return self._auth.get_user(uid)
-        except Exception as e:
-            logger.error(f"Failed to get user: {str(e)}")
+        except Exception:
+            logger.error('Firebase user lookup failed')
             raise
     
     def get_user_by_email(self, email):
@@ -137,8 +137,8 @@ class FirebaseService:
         """
         try:
             return self._auth.get_user_by_email(email)
-        except Exception as e:
-            logger.error(f"Failed to get user by email: {str(e)}")
+        except Exception:
+            logger.error('Firebase email lookup failed')
             raise
     
     def create_user(self, email, password, **kwargs):
@@ -159,10 +159,10 @@ class FirebaseService:
                 password=password,
                 **kwargs
             )
-            logger.info(f"Created Firebase user with UID: {user.uid}")
+            logger.info('Firebase user created')
             return user
-        except Exception as e:
-            logger.error(f"Failed to create user: {str(e)}")
+        except Exception:
+            logger.error('Firebase user creation failed')
             raise
     
     def update_user(self, uid, **kwargs):
@@ -178,10 +178,10 @@ class FirebaseService:
         """
         try:
             user = self._auth.update_user(uid, **kwargs)
-            logger.info(f"Updated Firebase user with UID: {uid}")
+            logger.info('Firebase user updated')
             return user
-        except Exception as e:
-            logger.error(f"Failed to update user: {str(e)}")
+        except Exception:
+            logger.error('Firebase user update failed')
             raise
     
     def delete_user(self, uid):
@@ -193,9 +193,9 @@ class FirebaseService:
         """
         try:
             self._auth.delete_user(uid)
-            logger.info(f"Deleted Firebase user with UID: {uid}")
-        except Exception as e:
-            logger.error(f"Failed to delete user: {str(e)}")
+            logger.info('Firebase user deleted')
+        except Exception:
+            logger.error('Firebase user deletion failed')
             raise
     
     def send_email_verification(self, email, action_code_settings=None):
@@ -214,10 +214,10 @@ class FirebaseService:
                 email, 
                 action_code_settings
             )
-            logger.info(f"Generated email verification link for: {email}")
+            logger.info('Firebase email verification link generated')
             return link
-        except Exception as e:
-            logger.error(f"Failed to send email verification: {str(e)}")
+        except Exception:
+            logger.error('Firebase email-verification link generation failed')
             raise
     
     def send_password_reset_email(self, email, action_code_settings=None):
@@ -236,10 +236,10 @@ class FirebaseService:
                 email,
                 action_code_settings
             )
-            logger.info(f"Generated password reset link for: {email}")
+            logger.info('Firebase password-reset link generated')
             return link
-        except Exception as e:
-            logger.error(f"Failed to send password reset email: {str(e)}")
+        except Exception:
+            logger.error('Firebase password-reset link generation failed')
             raise
 
 # Global instance

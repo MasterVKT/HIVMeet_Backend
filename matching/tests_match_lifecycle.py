@@ -7,6 +7,7 @@ from rest_framework.test import APITestCase
 
 from matching.models import InteractionHistory, Like, Match
 from matching.services import MatchingService
+from matching.test_support import grant_social_access
 
 
 User = get_user_model()
@@ -38,6 +39,7 @@ class MatchLifecycleContractTests(APITestCase):
             email_verified=True,
             is_active=True,
         )
+        grant_social_access(self.owner, self.other, self.stranger)
         self.client.force_authenticate(self.owner)
 
     def _create_match(self, status_value=Match.ACTIVE):

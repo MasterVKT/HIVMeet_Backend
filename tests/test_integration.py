@@ -33,12 +33,10 @@ class UserRegistrationFlowTest(APIBaseTestCase):
     """Test complete user registration and profile creation flow."""
     
     @patch('profiles.views.storage_manager.upload_image')
-    @patch('authentication.views.send_verification_email')
     @patch('authentication.views._firebase_service')
     def test_complete_registration_flow(
         self,
         firebase_service_factory,
-        send_verification_email,
         upload_image,
     ):
         """Test full registration process from signup to profile completion."""
@@ -63,10 +61,13 @@ class UserRegistrationFlowTest(APIBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn('user_id', response.data)
         firebase_service.create_user.assert_called_once()
-        send_verification_email.assert_called_once()
         
-        # 2. Authenticate
+        # 2. Simulate the verified Firebase identity and approved KYC state
+        # required before a full social/profile session is opened.
         user = User.objects.get(id=response.data['user_id'])
+        user.email_verified = True
+        user.save(update_fields=['email_verified'])
+        grant_active_kyc(user)
         self.client.force_authenticate(user=user)
         
         # 3. Create profile

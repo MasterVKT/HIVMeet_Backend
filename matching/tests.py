@@ -4,6 +4,7 @@ from datetime import date
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
 from profiles.models import Profile
+from matching.test_support import grant_social_access
 
 User = get_user_model()
 
@@ -48,6 +49,7 @@ class DiscoveryAPITest(APITestCase):
         self.female_profile.bio = 'Looking for men'
         self.female_profile.allow_in_discovery = True
         self.female_profile.save()
+        grant_social_access(self.male_user, self.female_user)
     
     def test_discovery_returns_compatible_profiles(self):
         """Test that discovery returns compatible profiles"""

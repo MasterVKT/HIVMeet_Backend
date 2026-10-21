@@ -15,6 +15,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from matching.free_access import FreeMatchAccessService
 from matching.models import Like, Match, MonthlyFreeAccess
+from matching.test_support import grant_social_access
 from messaging.consumers import ConversationConsumer
 from messaging.services import MessageService
 from subscriptions.utils import invalidate_premium_status_cache
@@ -39,6 +40,7 @@ class FreeMatchAccessContractTests(TestCase):
             email='free-bob@example.test', password='Secret123!',
             display_name='Bob', birth_date=date(1991, 1, 1),
         )
+        grant_social_access(self.alice, self.bob)
         self.client = APIClient()
 
     def _match(self):
@@ -248,6 +250,7 @@ class FreeMatchAccessWebSocketTests(TransactionTestCase):
             display_name='Bob WS', birth_date=date(1991, 1, 1),
         )
         self.match = Match.objects.create(user1=self.alice, user2=self.bob)
+        grant_social_access(self.alice, self.bob)
         FreeMatchAccessService.initialize_new_match(self.match)
 
     def _token(self, user):

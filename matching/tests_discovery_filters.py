@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 from matching.daily_likes_service import DailyLikesService
 from matching.models import InteractionHistory, Like
 from matching.services import MatchingService, RecommendationService
+from matching.test_support import grant_social_access
 from subscriptions.models import Subscription, SubscriptionPlan
 
 
@@ -66,6 +67,7 @@ class DiscoveryFilterDeterministicTests(TestCase):
         profile.city = "Paris"
         profile.country = "France"
         profile.save()
+        grant_social_access(user)
         return user
 
     def test_age_filter_inclusive_boundaries(self):
@@ -438,6 +440,7 @@ class DailyLikesDeterministicTests(TestCase):
         profile.genders_sought = []
         profile.relationship_types_sought = []
         profile.save()
+        grant_social_access(user)
         return user
 
     def test_free_user_cannot_send_super_likes(self):

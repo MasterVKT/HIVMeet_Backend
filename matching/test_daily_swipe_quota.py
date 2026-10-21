@@ -9,6 +9,7 @@ from .daily_likes_service import DailyLikesService
 from .models import InteractionHistory
 from .services import MatchingService
 from .signals import dispatch_group_event
+from .test_support import grant_social_access
 
 
 User = get_user_model()
@@ -22,14 +23,17 @@ class DailySwipeQuotaTest(TestCase):
             display_name='Swiper',
             birth_date=date(1990, 1, 1),
         )
+        grant_social_access(self.user)
 
     def _target(self, index):
-        return User.objects.create_user(
+        target = User.objects.create_user(
             email=f'target-{index}@example.com',
             password='test-pass',
             display_name=f'Target {index}',
             birth_date=date(1990, 1, 1),
         )
+        grant_social_access(target)
+        return target
 
     @patch('matching.signals.Thread')
     @patch('matching.signals.transaction.on_commit')
